@@ -432,4 +432,28 @@ patch(
 		string text = Path.Combine(GetContentRoot(), "ContentHashes.json");""",
 )
 
+# --- Blazor's XACT ADPCM initializer is an empty stub -------------------------
+# KNI 4.3.9001 ConcreteSoundEffect.PlatformInitializeXactAdpcm returns without
+# creating an AudioBuffer. Loading the banks succeeds, but playing the first cue
+# crashes in AudioBufferSourceNode.set_Buffer. Use the game's existing silent
+# backend until a browser decoder is integrated; desktop XACT remains intact.
+patch(
+    "StardewValley/Game1.cs",
+    """\t\t\t\tstring rootDirectory = base.Content.RootDirectory;
+\t\t\t\tAudioEngine obj = new AudioEngine(Path.Combine(rootDirectory, "XACT", "FarmerSounds.xgs"));""",
+    """#if WEB
+\t\t\t\tlog.Warn("Browser audio disabled: KNI 4.3.9001 does not initialize XACT ADPCM buffers.");
+\t\t\t\taudioEngine = new DummyAudioEngine();
+\t\t\t\tsoundBank = new DummySoundBank();
+#else
+\t\t\t\tstring rootDirectory = base.Content.RootDirectory;
+\t\t\t\tAudioEngine obj = new AudioEngine(Path.Combine(rootDirectory, "XACT", "FarmerSounds.xgs"));""",
+)
+patch(
+    "StardewValley/Game1.cs",
+    """\t\t\t\tsoundBank = new SoundBankWrapper(new SoundBank(audioEngine.Engine, Path.Combine(rootDirectory, "XACT", "Sound Bank.xsb")));""",
+    """\t\t\t\tsoundBank = new SoundBankWrapper(new SoundBank(audioEngine.Engine, Path.Combine(rootDirectory, "XACT", "Sound Bank.xsb")));
+#endif""",
+)
+
 print("platform patches applied")
