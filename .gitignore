@@ -8,3 +8,6 @@ bin/
 obj/
 node_modules/
 .DS_Store
+
+# Local symlink to the vendored game content, created by the web build.
+src/web/wwwroot/Content
