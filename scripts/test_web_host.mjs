@@ -23,8 +23,17 @@ function runHost(options = {}) {
     id: 'theCanvas',
     clientWidth: 1280,
     clientHeight: 720,
+    listeners: {},
+    lockCalls: 0,
     getBoundingClientRect() {
       return { x: 0, y: 0, width: 1280, height: 720 };
+    },
+    addEventListener(type, fn) {
+      (this.listeners[type] = this.listeners[type] || []).push(fn);
+    },
+    requestPointerLock() {
+      this.lockCalls += 1;
+      document.pointerLockElement = this;
     },
   };
   if (!fallback) {
@@ -38,6 +47,7 @@ function runHost(options = {}) {
     hidden: false,
     readyState: 'loading',
     baseURI: 'http://localhost/',
+    pointerLockElement: null,
     addEventListener(type, fn) {
       if (type === 'DOMContentLoaded') readyListeners.push(fn);
     },
@@ -248,6 +258,20 @@ assert.equal(forwarded.data.type, 'event');
 assert.equal(forwarded.data.name, 'mousemove');
 assert.equal(forwarded.data.clientX, 12);
 assert.equal(forwarded.data.clientY, 34);
+
+runtime.canvas.listeners.mousedown[0]({ button: 0, clientX: 100, clientY: 50 });
+assert.equal(runtime.canvas.lockCalls, 1);
+assert.equal(runtime.document.pointerLockElement, runtime.canvas);
+runtime.windowListeners.mousemove[0]({
+  clientX: 0,
+  clientY: 0,
+  movementX: 10,
+  movementY: -4,
+  buttons: 0,
+});
+const lockedMove = runtime.workers[0].posted[runtime.workers[0].posted.length - 1];
+assert.equal(lockedMove.data.clientX, 110);
+assert.equal(lockedMove.data.clientY, 46);
 
 // Without OffscreenCanvas, the host falls back to injecting scripts on this thread.
 const fallback = runHost({ fallback: true });

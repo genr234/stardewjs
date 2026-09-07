@@ -226,13 +226,134 @@ console.error = function () {
     };
   }
 
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  // Locked mouse events stop updating clientX/clientY, so movement deltas are
+  // accumulated into a virtual pointer.
+  function bindPointerLock(canvas, options) {
+    var pointerX = 0;
+    var pointerY = 0;
+    var supported = !!(canvas && typeof canvas.requestPointerLock === 'function');
+    var rewrite = !!(options && options.rewriteWindowEvents && supported);
+    var rewriting = false;
+
+    function isLocked() {
+      return supported && document.pointerLockElement === canvas;
+    }
+
+    function bounds() {
+      var rect = canvas.getBoundingClientRect
+        ? canvas.getBoundingClientRect()
+        : { x: 0, y: 0, width: 0, height: 0 };
+      return {
+        left: rect.x || 0,
+        top: rect.y || 0,
+        width: rect.width || canvas.clientWidth || window.innerWidth || 0,
+        height: rect.height || canvas.clientHeight || window.innerHeight || 0,
+      };
+    }
+
+    function clientPoint(event) {
+      if (!event) return { clientX: pointerX, clientY: pointerY };
+      if (isLocked()) {
+        var box = bounds();
+        pointerX = clamp(pointerX + (event.movementX || 0), box.left, box.left + Math.max(box.width - 1, 0));
+        pointerY = clamp(pointerY + (event.movementY || 0), box.top, box.top + Math.max(box.height - 1, 0));
+      } else if (typeof event.clientX === 'number') {
+        pointerX = event.clientX;
+        pointerY = event.clientY;
+      }
+      return { clientX: pointerX, clientY: pointerY };
+    }
+
+    function setLockedStyle(locked) {
+      if (canvas.style) canvas.style.cursor = locked ? 'none' : '';
+      if (canvas.classList) {
+        if (locked) canvas.classList.add('pointer-locked');
+        else canvas.classList.remove('pointer-locked');
+      }
+    }
+
+    function requestLock() {
+      if (!supported || isLocked()) return;
+      var result;
+      try {
+        result = canvas.requestPointerLock({ unadjustedMovement: true });
+      } catch (err) {
+        result = canvas.requestPointerLock();
+      }
+      if (result && typeof result.catch === 'function') {
+        result.catch(function () {
+          try { canvas.requestPointerLock(); } catch (ignored) {}
+        });
+      }
+    }
+
+    if (supported) {
+      canvas.addEventListener('mousedown', function (event) {
+        if (event && event.button != null && event.button !== 0) return;
+        if (!isLocked() && event && typeof event.clientX === 'number') {
+          pointerX = event.clientX;
+          pointerY = event.clientY;
+        }
+        requestLock();
+      });
+      document.addEventListener('pointerlockchange', function () {
+        setLockedStyle(isLocked());
+      });
+    }
+
+    if (rewrite) {
+      ['mousemove', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu', 'wheel'].forEach(function (type) {
+        window.addEventListener(type, function (event) {
+          if (rewriting || !isLocked() || (event && event.__fromPointerLock)) return;
+          var point = clientPoint(event);
+          event.stopImmediatePropagation();
+          rewriting = true;
+          try {
+            var Ctor = type === 'wheel' && typeof WheelEvent === 'function' ? WheelEvent : MouseEvent;
+            var synth = new Ctor(type, {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: point.clientX,
+              clientY: point.clientY,
+              screenX: point.clientX,
+              screenY: point.clientY,
+              buttons: event.buttons,
+              button: event.button,
+              deltaX: event.deltaX,
+              deltaY: event.deltaY,
+              deltaZ: event.deltaZ,
+              deltaMode: event.deltaMode,
+              movementX: event.movementX,
+              movementY: event.movementY,
+            });
+            synth.__fromPointerLock = true;
+            window.dispatchEvent(synth);
+          } finally {
+            rewriting = false;
+          }
+        }, true);
+      });
+    }
+
+    return { clientPoint: clientPoint, isLocked: isLocked };
+  }
+
   function forwardInput(worker, canvas) {
+    var pointer = bindPointerLock(canvas);
     function postEvent(name, event, extra) {
+      var point = event && (name === 'mousemove' || name === 'mousedown' || name === 'mouseup' || name === 'wheel')
+        ? pointer.clientPoint(event)
+        : null;
       var payload = {
         type: 'event',
         name: name,
-        clientX: event && event.clientX,
-        clientY: event && event.clientY,
+        clientX: point ? point.clientX : (event && event.clientX),
+        clientY: point ? point.clientY : (event && event.clientY),
         buttons: event && event.buttons,
         deltaX: event && event.deltaX,
         deltaY: event && event.deltaY,
@@ -311,6 +432,7 @@ console.error = function () {
   }
 
   function loadMainThreadRuntime() {
+    bindPointerLock(document.getElementById('theCanvas'), { rewriteWindowEvents: true });
     return loadScript('js/runtime.js').then(function () {
       return window.loadRuntimeScripts();
     }).then(function () {
