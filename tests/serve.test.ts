@@ -35,6 +35,12 @@ describe("static host", () => {
     expect(res.headers.get("Content-Type")).toBe("application/wasm");
   });
 
+  test("sets an audio content type on extracted wave bank entries", async () => {
+    const res = await server.fetch(new Request("http://localhost/Audio/main/0005.opus"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("audio/ogg");
+  });
+
   test("sends COOP and COEP on every response", async () => {
     const ok = await server.fetch(new Request("http://localhost/"));
     const missing = await server.fetch(new Request("http://localhost/nope"));

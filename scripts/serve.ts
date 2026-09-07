@@ -18,7 +18,7 @@ export type HostOptions = HostRoots & {
   hostname?: string;
 };
 
-const LARGE_PATH = /(?:^|\/)(?:Content|_framework|_content)(?:\/|$)/i;
+const LARGE_PATH = /(?:^|\/)(?:Content|Audio|_framework|_content)(?:\/|$)/i;
 
 export function findFrameworkRoot(webProjectDir: string): string | null {
   const bin = join(webProjectDir, "bin");
@@ -67,7 +67,10 @@ export async function lookupFile(roots: HostRoots, urlPath: string): Promise<str
 }
 
 function contentTypeFor(path: string, fileType: string): string {
-  if (extname(path).toLowerCase() === ".wasm") return "application/wasm";
+  const extension = extname(path).toLowerCase();
+  if (extension === ".wasm") return "application/wasm";
+  // Bun doesn't know the .opus type.
+  if (extension === ".opus") return "audio/ogg";
   return fileType || "application/octet-stream";
 }
 

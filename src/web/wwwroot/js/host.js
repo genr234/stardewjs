@@ -208,6 +208,9 @@ console.error = function () {
       case 'addAsset':
         window.__boot.addAsset();
         break;
+      case 'audio':
+        if (window.browserAudioOutput) window.browserAudioOutput.apply(data.command);
+        break;
       case 'profiler':
         if (window.__profiler && typeof window.__profiler.update === 'function') {
           window.__profiler.update(data);
@@ -483,6 +486,13 @@ console.error = function () {
     worker.onmessage = function (event) {
       handleWorkerMessage(event.data);
     };
+    // A one-shot cue is over when its source ends, which only the page can see.
+    // The runtime needs to know so it can retire the cue the game still holds.
+    if (window.browserAudioOutput) {
+      window.browserAudioOutput.onEnded = function (handle) {
+        worker.postMessage({ type: 'audio-ended', handle: handle });
+      };
+    }
     var boot = canvasMetrics(canvas);
     boot.type = 'boot';
     boot.canvas = offscreen;

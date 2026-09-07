@@ -435,16 +435,17 @@ patch(
 # --- Blazor's XACT ADPCM initializer is an empty stub -------------------------
 # KNI 4.3.9001 ConcreteSoundEffect.PlatformInitializeXactAdpcm returns without
 # creating an AudioBuffer. Loading the banks succeeds, but playing the first cue
-# crashes in AudioBufferSourceNode.set_Buffer. Use the game's existing silent
-# backend until a browser decoder is integrated; desktop XACT remains intact.
+# crashes in AudioBufferSourceNode.set_Buffer. Nothing in the game talks to XACT
+# directly, so the browser build swaps in a Web Audio implementation of the same
+# ISoundBank/IAudioEngine seam the silent fallback uses, playing the wave banks
+# extracted to Opus. Desktop XACT remains intact.
 patch(
     "StardewValley/Game1.cs",
     """\t\t\t\tstring rootDirectory = base.Content.RootDirectory;
 \t\t\t\tAudioEngine obj = new AudioEngine(Path.Combine(rootDirectory, "XACT", "FarmerSounds.xgs"));""",
     """#if WEB
-\t\t\t\tlog.Warn("Browser audio disabled: KNI 4.3.9001 does not initialize XACT ADPCM buffers.");
-\t\t\t\taudioEngine = new DummyAudioEngine();
-\t\t\t\tsoundBank = new DummySoundBank();
+\t\t\t\taudioEngine = new StardewValley.Web.BrowserAudioEngine();
+\t\t\t\tsoundBank = new StardewValley.Web.BrowserSoundBank();
 #else
 \t\t\t\tstring rootDirectory = base.Content.RootDirectory;
 \t\t\t\tAudioEngine obj = new AudioEngine(Path.Combine(rootDirectory, "XACT", "FarmerSounds.xgs"));""",

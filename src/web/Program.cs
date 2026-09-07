@@ -38,6 +38,19 @@ public static class WebProgram
 			Stage("restoring-saves");
 			await BrowserSaveStorage.RestoreAsync(_js);
 
+			// A missing cue table leaves the game silent rather than unable to start.
+			Stage("loading-audio");
+			try
+			{
+				int cues = await _js.InvokeAsync<int>("browserAudio.init", "Audio/cues.json", "Audio");
+				BrowserAudio.Initialize(_js, cues);
+			}
+			catch (Exception audioException)
+			{
+				Console.WriteLine("[audio] Cue table unavailable, continuing without sound: " + audioException.Message);
+				BrowserAudio.Initialize(_js, 0);
+			}
+
 			Stage("constructing");
 			_runner = new GameRunner();
 			GameRunner.instance = _runner;

@@ -3,6 +3,7 @@
 (function (root) {
   var RUNTIME_SCRIPTS = [
     'js/save-storage.js',
+    'js/audio.js',
     '_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js',
     '_content/nkast.Wasm.Dom/js/Window.10.0.3.js',
     '_content/nkast.Wasm.Dom/js/Document.10.0.3.js',

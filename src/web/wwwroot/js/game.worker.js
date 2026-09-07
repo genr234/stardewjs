@@ -398,6 +398,10 @@ self.onmessage = function (e) {
     dispatchForwardedEvent(data);
     return;
   }
+  if (data.type === 'audio-ended') {
+    if (self.browserAudio) self.browserAudio.noteEnded(data.handle);
+    return;
+  }
   if (data.type === 'visibility') {
     self.document.hidden = !!data.hidden;
     return;

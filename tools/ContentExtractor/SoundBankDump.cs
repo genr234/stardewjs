@@ -35,27 +35,45 @@ public static class SoundBankDump
 
 		string[] bankNames = (string[])Field(soundBank, "_waveBankNames");
 		var cues = (IDictionary)Field(soundBank, "_cues");
+		var categoryNames = (Dictionary<string, int>)Field(engine, "_categoryLookup");
+		string[] categoriesByIndex = new string[categoryNames.Count];
+		foreach (KeyValuePair<string, int> category in categoryNames)
+		{
+			categoriesByIndex[category.Value] = category.Key;
+		}
 
 		var mapped = new SortedDictionary<string, object>(StringComparer.Ordinal);
 		int withWaves = 0;
+		int looping = 0;
 		foreach (DictionaryEntry entry in cues)
 		{
-			var references = new List<(int Bank, int Track)>();
-			Collect(entry.Value, references, new HashSet<object>(ReferenceEqualityComparer.Instance), 0);
+			var cue = new CueInfo();
+			Collect(entry.Value, cue, new HashSet<object>(ReferenceEqualityComparer.Instance), 0);
 
-			if (references.Count > 0)
+			if (cue.References.Count > 0)
 			{
 				withWaves++;
 			}
-			mapped[(string)entry.Key] = references
-				.Distinct()
-				.Select(reference => new
-				{
-					Bank = reference.Bank >= 0 && reference.Bank < bankNames.Length ? bankNames[reference.Bank] : null,
-					BankIndex = reference.Bank,
-					Track = reference.Track
-				})
-				.ToArray();
+			if (cue.Loop)
+			{
+				looping++;
+			}
+			mapped[(string)entry.Key] = new
+			{
+				Category = cue.Category.HasValue && cue.Category < categoriesByIndex.Length
+					? categoriesByIndex[(int)cue.Category.Value]
+					: null,
+				Loop = cue.Loop,
+				Tracks = cue.References
+					.Distinct()
+					.Select(reference => new
+					{
+						Bank = reference.Bank >= 0 && reference.Bank < bankNames.Length ? bankNames[reference.Bank] : null,
+						BankIndex = reference.Bank,
+						Track = reference.Track
+					})
+					.ToArray()
+			};
 		}
 
 		var document = new { WaveBanks = bankNames, Cues = mapped };
@@ -63,14 +81,24 @@ public static class SoundBankDump
 		File.WriteAllText(outputPath, JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true }));
 
 		Console.WriteLine($"wave banks: {string.Join(", ", bankNames)}");
-		Console.WriteLine($"{mapped.Count} cues, {withWaves} resolved to wave entries -> {outputPath}");
+		Console.WriteLine($"{mapped.Count} cues, {withWaves} resolved to wave entries, {looping} looping -> {outputPath}");
+	}
+
+	/// <summary>What a single cue turned out to be made of.</summary>
+	private sealed class CueInfo
+	{
+		public readonly List<(int Bank, int Track)> References = new List<(int, int)>();
+
+		public uint? Category;
+
+		public bool Loop;
 	}
 
 	/// <summary>
 	/// Collects wave references without encoding MonoGame's nesting of simple
 	/// and complex sounds.
 	/// </summary>
-	private static void Collect(object node, List<(int, int)> found, HashSet<object> seen, int depth)
+	private static void Collect(object node, CueInfo found, HashSet<object> seen, int depth)
 	{
 		if (node is null || depth > 12 || node is string || node.GetType().IsPrimitive || !seen.Add(node))
 		{
@@ -88,14 +116,15 @@ public static class SoundBankDump
 			case PlayWaveVariant variant:
 				if (variant.track >= 0)
 				{
-					found.Add((variant.waveBank, variant.track));
+					found.References.Add((variant.waveBank, variant.track));
 				}
 				return;
 
 			case XactSoundBankSound sound:
+				found.Category ??= sound.categoryID;
 				if (!sound.complexSound)
 				{
-					found.Add((sound.waveBankIndex, sound.trackIndex));
+					found.References.Add((sound.waveBankIndex, sound.trackIndex));
 				}
 				foreach (object clip in sound.soundClips ?? Array.Empty<XactClip>())
 				{
@@ -109,6 +138,13 @@ public static class SoundBankDump
 					Collect(item, found, seen, depth + 1);
 				}
 				return;
+		}
+
+		// Loop count 255 means forever.
+		if (node.GetType().Name == "PlayWaveEvent"
+			&& node.GetType().GetField("_loopCount", AllMembers)?.GetValue(node) is uint loopCount)
+		{
+			found.Loop |= loopCount == 255u;
 		}
 
 		foreach (FieldInfo field in node.GetType().GetFields(AllMembers))
