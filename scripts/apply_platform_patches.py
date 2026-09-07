@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Guard the handful of places where KNI and ConcernedApe's MonoGame fork differ.
+"""Guard the places where the game's assumptions do not hold off its home platform.
 
-Both builds compile the same decompiled tree, so the differences are expressed as
-`#if KNI` blocks rather than a second copy of the source. Only the KNI project
-defines the symbol; the MonoGame build keeps compiling the original code.
+Two kinds of difference live here:
+
+  * `#if KNI` - where KNI and ConcernedApe's MonoGame fork disagree. Only the KNI
+    and browser projects define the symbol; the MonoGame build keeps compiling
+    the original code, so it stays usable as a reference to diff against.
+  * unconditional fixes - where the original code is simply wrong off Windows or
+    macOS and the correction is harmless everywhere.
+
+All three builds compile the same decompiled tree, so these are directives rather
+than a second copy of the source.
 
 Run after scripts/apply_fixes.py. Idempotent - re-running is a no-op.
 """
@@ -14,14 +21,15 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(ROOT, "src", "decompiled", "StardewValley")
 
 
-def patch(relative_path, original, replacement):
+def patch(relative_path, original, replacement, expected=1):
+    """Replace `original` with `replacement`, asserting it appears `expected` times."""
     path = os.path.join(SRC, relative_path)
     source = open(path).read()
     if replacement in source:
         print(f"already patched {relative_path}")
         return
-    if source.count(original) != 1:
-        sys.exit(f"{relative_path}: expected exactly one match, found {source.count(original)}")
+    if source.count(original) != expected:
+        sys.exit(f"{relative_path}: expected {expected} match(es), found {source.count(original)}")
     open(path, "w").write(source.replace(original, replacement))
     print(f"patched {relative_path}")
 
@@ -355,4 +363,60 @@ patch(
 #endif""",
 )
 
-print("KNI patches applied")
+# --- Win32 IME hook on a platform that is neither Windows nor Unix ------------
+# The dispatcher routes to window.TextInput on Unix and Win32NT, and otherwise
+# installs a Win32 keyboard hook. WASM reports PlatformID.Other, so it took the
+# hook path and the runtime refused to marshal HookProc to a native callback.
+patch(
+    "StardewValley/KeyboardDispatcher.cs",
+    """		if (Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.Win32NT)
+		{""",
+    """		if (Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.Win32NT || OperatingSystem.IsBrowser())
+		{""",
+    # Both the constructor and Cleanup test this, and they have to agree.
+    expected=2,
+)
+
+# --- Display-mode enumeration -------------------------------------------------
+# KNI's Blazor adapter throws from SupportedDisplayModes - a canvas has no modes
+# to list - while CurrentDisplayMode works. The shim returns just that one on the
+# web and delegates everywhere else, so both builds share the call sites.
+for _path, _count in [("StardewValley/Options.cs", 2), ("StardewValley/Game1.cs", 3)]:
+    patch(_path, ".Adapter.SupportedDisplayModes", ".Adapter.GetSupportedDisplayModes()", expected=_count)
+
+# --- The content manifest is read off disk ------------------------------------
+# ContentHashes.json lists every shipped asset, and DoesAssetExist consults it
+# before any load is attempted. In a browser File.Exists is always false, so the
+# manifest stayed empty and every single asset was reported missing - the load
+# never even issued a request. TitleContainer is the one reader that works in
+# both places (it is synchronous XHR on the web).
+patch(
+    "StardewValley/LocalizedContentManager.cs",
+    """		_manifest = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		string text = Path.Combine(GetContentRoot(), "ContentHashes.json");""",
+    """		_manifest = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+#if KNI
+		if (OperatingSystem.IsBrowser())
+		{
+			string manifestUrl = base.RootDirectory + "/ContentHashes.json";
+			try
+			{
+				using Stream manifestStream = TitleContainer.OpenStream(manifestUrl);
+				using StreamReader manifestReader = new StreamReader(manifestStream);
+				if (CHJsonParser.ParseJson(manifestReader.ReadToEnd()) is Dictionary<string, object> manifest)
+				{
+					_manifest.UnionWith(manifest.Keys);
+					Game1.log.Verbose($"Loaded ContentHashes.json over HTTP containing {manifest.Count} file(s).");
+				}
+			}
+			catch (Exception manifestException)
+			{
+				Game1.log.Error("Could not fetch ContentHashes.json over HTTP.", manifestException);
+			}
+			return;
+		}
+#endif
+		string text = Path.Combine(GetContentRoot(), "ContentHashes.json");""",
+)
+
+print("platform patches applied")

@@ -64,4 +64,22 @@ public static class KniAudioShims
 }
 
 }
+
+namespace Microsoft.Xna.Framework.Graphics
+{
+
+public static class KniGraphicsShims
+{
+	/// <summary>KNI's Blazor adapter throws from SupportedDisplayModes; a canvas has one mode.</summary>
+	public static System.Collections.Generic.IEnumerable<DisplayMode> GetSupportedDisplayModes(this GraphicsAdapter adapter)
+	{
+		if (OperatingSystem.IsBrowser())
+		{
+			return new[] { adapter.CurrentDisplayMode };
+		}
+		return adapter.SupportedDisplayModes;
+	}
+}
+
+}
 #endif

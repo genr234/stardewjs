@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>Stardew Valley</title>
+  <base href="/" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+    #theCanvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; touch-action: none; }
+    #boot {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      color: #cfc6a8; background: #1b1a17;
+      font: 14px ui-monospace, Menlo, monospace; text-align: center; white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="theCanvas" width="1280" height="720"></canvas>
+  <div id="boot">loading the .NET runtime and 1262 assets
+this takes a while on a cold cache</div>
+
+  <script>
+    // Surface managed exceptions on the page instead of only in the console;
+    // a WASM failure otherwise looks like a blank canvas.
+    window.__errs = [];
+    window.reportBootError = function (message) {
+      window.__errs.push(message);
+      var boot = document.getElementById('boot');
+      if (boot) { boot.textContent = message.slice(0, 2000); }
+    };
+    window.addEventListener('error', function (e) {
+      reportBootError(String((e.error && e.error.stack) || e.message));
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      reportBootError('unhandled rejection: ' + String((e.reason && e.reason.stack) || e.reason));
+    });
+    // Blazor reports managed exceptions through console.error rather than the
+    // error event, and the managed stack only lives on the argument object.
+    var nativeConsoleError = console.error.bind(console);
+    console.error = function () {
+      for (var i = 0; i < arguments.length; i++) {
+        var a = arguments[i];
+        if (a && (a.stack || a.message)) {
+          reportBootError(String(a.message || '') + '\n\n' + String(a.stack || ''));
+        } else if (typeof a === 'string' && a.indexOf('   at ') >= 0) {
+          // Console.Error.WriteLine of a managed exception arrives as a plain string.
+          reportBootError(a);
+        }
+      }
+      return nativeConsoleError.apply(null, arguments);
+    };
+  </script>
+
+  <script>
+    // ?debug=1 makes the framebuffer readable and counts draw calls, so the
+    // renderer can be verified without a visible window. Off by default:
+    // preserveDrawingBuffer costs real performance.
+    if (new URLSearchParams(location.search).has('debug')) {
+      window.__glDraws = 0;
+      var originalGetContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+        if (type === 'webgl2' || type === 'webgl') {
+          attrs = Object.assign({}, attrs, { preserveDrawingBuffer: true });
+        }
+        var ctx = originalGetContext.call(this, type, attrs);
+        if (ctx && (type === 'webgl2' || type === 'webgl') && !ctx.__instrumented) {
+          ctx.__instrumented = true;
+          ['drawArrays', 'drawElements', 'drawArraysInstanced', 'drawElementsInstanced'].forEach(function (name) {
+            var fn = ctx[name];
+            if (typeof fn === 'function') {
+              ctx[name] = function () { window.__glDraws++; return fn.apply(ctx, arguments); };
+            }
+          });
+        }
+        return ctx;
+      };
+    }
+  </script>
+
+  <!-- nkast.Wasm JS interop, required before the runtime starts -->
+  <script src="_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Window.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Document.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Navigator.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Gamepad.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Dom/js/Media.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/Canvas.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.Audio/js/Audio.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.XHR/js/XHR.10.0.3.js"></script>
+  <script src="_content/nkast.Wasm.XR/js/XR.10.0.3.js"></script>
+
+  <script>
+    // The game asks to be driven from here: KNI's Blazor platform does not start
+    // its own loop, and pacing it from managed code starves on Blazor's
+    // synchronization context.
+    window.__frames = 0;
+    window.startGameLoop = function (dotnetRef) {
+      function frame() {
+        try {
+          dotnetRef.invokeMethod('Tick');
+          window.__frames++;
+        } catch (e) {
+          console.error(e);
+          return;
+        }
+        schedule(frame);
+      }
+      // requestAnimationFrame does not fire while the page is hidden, which stops
+      // the game entirely rather than pausing it. Fall back to a timer so a
+      // background tab keeps running (slowly, as the browser clamps it).
+      function schedule(fn) {
+        if (document.hidden) { setTimeout(fn, 16); } else { requestAnimationFrame(fn); }
+      }
+      schedule(frame);
+    };
+  </script>
+
+  <script src="_framework/blazor.webassembly.js" autostart="true"></script>
+</body>
+</html>
