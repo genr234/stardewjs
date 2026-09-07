@@ -4,9 +4,10 @@
     instead. Nothing under src/decompiled is copied here - it is linked - so the
     two builds can never drift apart.
 
-    Still osx-x64: the vendored xTile / GameData / BmFont / Lidgren assemblies are
-    marked x86-64 and will not load on arm64. KNI itself is architecture-neutral,
-    so that constraint disappears once those are rebuilt or the web build lands.
+    Native arm64. The vendored xTile / GameData / BmFont / Lidgren / Steamworks
+    assemblies ship marked x86-64, which CoreCLR refuses to load on arm64 - but
+    they are all ILONLY, so scripts/make_anycpu.py rewrites the PE machine field
+    and the marking goes away. KNI's own macOS natives are universal.
   -->
   <PropertyGroup>
     <AssemblyName>Stardew Valley</AssemblyName>
@@ -14,7 +15,7 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
-    <RuntimeIdentifier>osx-x64</RuntimeIdentifier>
+    <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <LangVersion>preview</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -23,7 +24,7 @@
     <DefineConstants>$(DefineConstants);KNI</DefineConstants>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <NoWarn>$(NoWarn);CS0108;CS0114;CS0162;CS0169;CS0219;CS0414;CS0618;CS0649;CS0672;CS1717;CS8509;CS8632;CS8981;SYSLIB0011;SYSLIB0051;CA1416;CA2022;CA2200</NoWarn>
-    <GameLibs>$(MSBuildThisFileDirectory)../../vendor/game/MacOS</GameLibs>
+    <GameLibs>$(MSBuildThisFileDirectory)../../build/anycpu</GameLibs>
     <Decompiled>$(MSBuildThisFileDirectory)../decompiled/StardewValley</Decompiled>
   </PropertyGroup>
 
@@ -47,6 +48,12 @@
     <PackageReference Include="nkast.Xna.Framework.Storage" Version="4.3.9001" />
     <PackageReference Include="nkast.Kni.Platform.SDL2.GL" Version="4.3.9001" />
   </ItemGroup>
+
+  <!-- The AnyCPU copies are generated, not vendored, so make the build produce them. -->
+  <Target Name="MakeAnyCpuLibs" BeforeTargets="ResolveAssemblyReferences">
+    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../scripts/make_anycpu.py&quot;"
+          StandardOutputImportance="low" />
+  </Target>
 
   <ItemGroup>
     <!-- Satisfies the MonoGame.Framework reference baked into the vendored assemblies. -->
