@@ -382,7 +382,20 @@ patch(
 # to list - while CurrentDisplayMode works. The shim returns just that one on the
 # web and delegates everywhere else, so both builds share the call sites.
 for _path, _count in [("StardewValley/Options.cs", 2), ("StardewValley/Game1.cs", 3)]:
-    patch(_path, ".Adapter.SupportedDisplayModes", ".Adapter.GetSupportedDisplayModes()", expected=_count)
+    # Migrate the earlier unconditional extension calls too: those broke the
+    # MonoGame reference build, which deliberately excludes KniShims.cs.
+    _file = os.path.join(SRC, _path)
+    _source = open(_file).read()
+    _marker = "#if KNI // Display modes"
+    if _marker not in _source:
+        _source = _source.replace(".Adapter.GetSupportedDisplayModes()", ".Adapter.SupportedDisplayModes")
+        _lines = [line for line in _source.splitlines() if ".Adapter.SupportedDisplayModes" in line]
+        if len(_lines) != _count:
+            sys.exit(f"{_path}: expected {_count} display-mode lines, found {len(_lines)}")
+        for _line in _lines:
+            _kni_line = _line.replace(".Adapter.SupportedDisplayModes", ".Adapter.GetSupportedDisplayModes()")
+            _source = _source.replace(_line, f"{_marker}\n{_kni_line}\n#else\n{_line}\n#endif")
+        open(_file, "w").write(_source)
 
 # --- The content manifest is read off disk ------------------------------------
 # ContentHashes.json lists every shipped asset, and DoesAssetExist consults it
