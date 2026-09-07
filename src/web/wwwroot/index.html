@@ -1,23 +1,54 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <title>Stardew Valley</title>
   <base href="/" />
-  <!-- Alpine 3.14.8, vendored from https://alpinejs.dev/ so boot does not wait on a CDN. -->
   <script defer src="js/alpine.min.js"></script>
   <style>
-    html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
-    #theCanvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; touch-action: none; }
-    #boot {
-      position: fixed; inset: 0; display: grid; place-items: center;
-      color: #cfc6a8; background: #1b1a17;
-      font: 14px ui-monospace, Menlo, monospace; text-align: center;
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
     }
-    #boot[role="alert"] { white-space: pre-line; padding: 24px; }
-    .boot-panel { width: min(28rem, calc(100vw - 3rem)); }
-    .boot-status { margin: 0 0 12px; }
+
+    #theCanvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+      touch-action: none;
+    }
+
+    #boot {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #cfc6a8;
+      background: #1b1a17;
+      font: 14px ui-monospace, Menlo, monospace;
+      text-align: center;
+    }
+
+    #boot[role="alert"] {
+      white-space: pre-line;
+      padding: 24px;
+    }
+
+    .boot-panel {
+      width: min(28rem, calc(100vw - 3rem));
+    }
+
+    .boot-status {
+      margin: 0 0 12px;
+    }
+
     .boot-bar {
       height: 16px;
       box-sizing: border-box;
@@ -25,20 +56,26 @@
       border: 2px solid #cfc6a8;
       background: #0e0d0b;
     }
+
     .boot-bar-fill {
       height: 100%;
       width: 0%;
       background: #e6c35c;
       box-shadow: inset 0 1px 0 #f4e19a;
     }
+
     @media (prefers-reduced-motion: no-preference) {
-      .boot-bar-fill { transition: width 100ms linear; }
+      .boot-bar-fill {
+        transition: width 100ms linear;
+      }
     }
+
     .boot-detail {
       margin: 12px 0 0;
       color: #8a8370;
       font-size: 12px;
     }
+
     .boot-error {
       margin: 0;
       max-width: min(40rem, calc(100vw - 3rem));
@@ -48,12 +85,14 @@
     }
   </style>
 </head>
+
 <body>
   <canvas id="theCanvas" width="1280" height="720"></canvas>
   <div id="boot" x-data x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
     <div class="boot-panel" x-show="!$store.boot.failed">
       <p class="boot-status" id="boot-status" x-text="$store.boot.status">loading the .NET runtime</p>
-      <div class="boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="$store.boot.percent" aria-labelledby="boot-status">
+      <div class="boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+        :aria-valuenow="$store.boot.percent" aria-labelledby="boot-status">
         <div class="boot-bar-fill" :style="{ width: $store.boot.percent + '%' }"></div>
       </div>
       <p class="boot-detail" x-text="$store.boot.detail">this takes a while on a cold cache</p>
@@ -61,8 +100,7 @@
     <pre class="boot-error" x-show="$store.boot.failed" x-text="$store.boot.error"></pre>
   </div>
 
-  <!-- First paint is this page plus Alpine and host.js. Those then fetch the
-       KNI interop scripts, the Blazor bootstrap, and the game. -->
   <script src="js/host.js"></script>
 </body>
+
 </html>
