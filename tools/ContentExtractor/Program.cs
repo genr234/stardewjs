@@ -353,6 +353,13 @@ public sealed class Extractor : Game
 		}
 
 		Directory.CreateDirectory(output);
+
+		if (args.Contains("--sounds"))
+		{
+			SoundBankDump.Run(Path.Combine(content, "XACT"), Path.Combine(output, "audio", "cues.json"));
+			return;
+		}
+
 		using var extractor = new Extractor(new Options(content, output, allLocales));
 		extractor.Run();
 	}
