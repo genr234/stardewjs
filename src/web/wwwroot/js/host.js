@@ -161,6 +161,7 @@ console.error = function () {
     if (overlay && overlay.remove) overlay.remove();
   };
 
+  // Fallback path: Content XHRs run on this thread. The worker patches XHR itself.
   if (typeof XMLHttpRequest !== 'undefined') {
     var nativeOpen = XMLHttpRequest.prototype.open;
     var nativeSend = XMLHttpRequest.prototype.send;
@@ -177,69 +178,124 @@ console.error = function () {
     };
   }
 
-  function countBootResources(manifest) {
-    var resources = (manifest && manifest.resources) || {};
-    var n = 0;
-    function walk(value) {
-      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
-      var keys = Object.keys(value);
-      if (keys.length && keys.every(function (key) { return typeof value[key] === 'string'; })) {
-        n += keys.length;
-        return;
-      }
-      keys.forEach(function (key) { walk(value[key]); });
+  function handleWorkerMessage(data) {
+    if (!data || typeof data !== 'object') return;
+    switch (data.type) {
+      case 'error':
+        window.reportBootError(data.message);
+        break;
+      case 'stage':
+        window.reportBootStage(data.name);
+        break;
+      case 'clear':
+        window.clearBoot();
+        break;
+      case 'setRuntime':
+        window.__boot.setRuntime(data.loaded, data.total);
+        break;
+      case 'expectRuntime':
+        window.__boot.expectRuntime();
+        break;
+      case 'addRuntime':
+        window.__boot.addRuntime();
+        break;
+      case 'finishRuntime':
+        window.__boot.finishRuntime();
+        break;
+      case 'setAssets':
+        window.__boot.setAssets(data.loaded, data.total);
+        break;
+      case 'addAsset':
+        window.__boot.addAsset();
+        break;
     }
-    walk(resources);
-    return n;
   }
 
-  window.startBlazor = function () {
-    if (typeof Blazor === 'undefined') return;
-    function begin(expected) {
-      if (expected > 0) window.__boot.setRuntime(0, expected);
-      var started = Blazor.start({
-        loadBootResource: function (type, name, defaultUri, integrity) {
-          if (type === 'dotnetjs') return defaultUri;
-          var init = {};
-          if (integrity) init.integrity = integrity;
-          var request = fetch(defaultUri, init);
-          if (expected <= 0) window.__boot.expectRuntime();
-          request.then(function () { window.__boot.addRuntime(); }, function () { window.__boot.addRuntime(); });
-          return request;
-        }
-      });
-      Promise.resolve(started).then(function () {
-        window.__boot.finishRuntime();
-      }, function (err) {
-        window.reportBootError(String((err && err.stack) || err));
-      });
-    }
-    fetch('_framework/blazor.boot.json').then(function (response) {
-      return response.json();
-    }).then(function (manifest) {
-      begin(countBootResources(manifest));
-    }).catch(function () {
-      begin(0);
-    });
-  };
+  function canvasMetrics(canvas) {
+    var rect = canvas && canvas.getBoundingClientRect
+      ? canvas.getBoundingClientRect()
+      : { x: 0, y: 0, width: 0, height: 0 };
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      hidden: !!(document && document.hidden),
+      clientWidth: canvas && canvas.clientWidth,
+      clientHeight: canvas && canvas.clientHeight,
+      boundingRect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    };
+  }
 
-  // KNI interop must exist before Blazor evaluates; Blazor must exist before
-  // startBlazor(). Loaded here so the first document is only the UI shell.
-  var RUNTIME_SCRIPTS = [
-    '_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js',
-    '_content/nkast.Wasm.Dom/js/Window.10.0.3.js',
-    '_content/nkast.Wasm.Dom/js/Document.10.0.3.js',
-    '_content/nkast.Wasm.Dom/js/Navigator.10.0.3.js',
-    '_content/nkast.Wasm.Dom/js/Gamepad.10.0.3.js',
-    '_content/nkast.Wasm.Dom/js/Media.10.0.3.js',
-    '_content/nkast.Wasm.Canvas/js/Canvas.10.0.3.js',
-    '_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.3.js',
-    '_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.3.js',
-    '_content/nkast.Wasm.Audio/js/Audio.10.0.3.js',
-    '_content/nkast.Wasm.XHR/js/XHR.10.0.3.js',
-    '_content/nkast.Wasm.XR/js/XR.10.0.3.js',
-    '_framework/blazor.webassembly.js',
-  ];
+  function forwardInput(worker, canvas) {
+    function postEvent(name, event, extra) {
+      var payload = {
+        type: 'event',
+        name: name,
+        clientX: event && event.clientX,
+        clientY: event && event.clientY,
+        buttons: event && event.buttons,
+        deltaX: event && event.deltaX,
+        deltaY: event && event.deltaY,
+        deltaZ: event && event.deltaZ,
+        deltaMode: event && event.deltaMode,
+        key: event && event.key,
+        keyCode: event && event.keyCode,
+        location: event && event.location,
+        gamepadIndex: event && event.gamepad && event.gamepad.index,
+      };
+      if (event && event.changedTouches) {
+        payload.touches = [];
+        for (var i = 0; i < event.changedTouches.length; i++) {
+          var touch = event.changedTouches[i];
+          payload.touches.push({
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            identifier: touch.identifier,
+          });
+        }
+      }
+      if (extra) {
+        Object.keys(extra).forEach(function (key) { payload[key] = extra[key]; });
+      }
+      worker.postMessage(payload);
+    }
+
+    window.addEventListener('resize', function () {
+      postEvent('resize', null, canvasMetrics(canvas));
+    });
+    window.addEventListener('focus', function () { postEvent('focus', null); });
+    window.addEventListener('blur', function () { postEvent('blur', null); });
+    window.addEventListener('mousemove', function (event) { postEvent('mousemove', event); });
+    window.addEventListener('mousedown', function (event) { postEvent('mousedown', event); });
+    window.addEventListener('mouseup', function (event) { postEvent('mouseup', event); });
+    window.addEventListener('wheel', function (event) { postEvent('wheel', event); });
+    window.addEventListener('keydown', function (event) { postEvent('keydown', event); });
+    window.addEventListener('keyup', function (event) { postEvent('keyup', event); });
+    window.addEventListener('touchstart', function (event) {
+      event.preventDefault();
+      postEvent('touchstart', event);
+    }, { passive: false });
+    window.addEventListener('touchmove', function (event) {
+      event.preventDefault();
+      postEvent('touchmove', event);
+    }, { passive: false });
+    window.addEventListener('touchend', function (event) {
+      event.preventDefault();
+      postEvent('touchend', event);
+    }, { passive: false });
+    window.addEventListener('touchcancel', function (event) { postEvent('touchcancel', event); });
+    window.addEventListener('gamepadconnected', function (event) { postEvent('gamepadconnected', event); });
+    window.addEventListener('gamepaddisconnected', function (event) { postEvent('gamepaddisconnected', event); });
+    document.addEventListener('visibilitychange', function () {
+      worker.postMessage({ type: 'visibility', hidden: document.hidden });
+    });
+  }
+
+  function canUseWorker(canvas) {
+    return typeof Worker === 'function'
+      && canvas
+      && typeof canvas.transferControlToOffscreen === 'function';
+  }
 
   function loadScript(src) {
     return new Promise(function (resolve, reject) {
@@ -254,13 +310,48 @@ console.error = function () {
     });
   }
 
+  function loadMainThreadRuntime() {
+    return loadScript('js/runtime.js').then(function () {
+      return window.loadRuntimeScripts();
+    }).then(function () {
+      window.startBlazor();
+    });
+  }
+
+  function startWorkerRuntime(canvas) {
+    var offscreen;
+    try {
+      offscreen = canvas.transferControlToOffscreen();
+    } catch (err) {
+      return loadMainThreadRuntime();
+    }
+    var worker;
+    try {
+      worker = new Worker('js/game.worker.js');
+    } catch (err) {
+      return loadMainThreadRuntime();
+    }
+    window.__gameWorker = worker;
+    worker.onerror = function (event) {
+      window.reportBootError(String((event && (event.message || event.error)) || 'game worker failed'));
+    };
+    worker.onmessage = function (event) {
+      handleWorkerMessage(event.data);
+    };
+    var boot = canvasMetrics(canvas);
+    boot.type = 'boot';
+    boot.canvas = offscreen;
+    boot.debug = new URLSearchParams(location.search).has('debug');
+    boot.baseURI = document.baseURI || location.href;
+    worker.postMessage(boot, [offscreen]);
+    forwardInput(worker, canvas);
+    return Promise.resolve();
+  }
+
   window.loadRuntime = function () {
     if (window.__runtimeLoad) return window.__runtimeLoad;
-    window.__runtimeLoad = RUNTIME_SCRIPTS.reduce(function (chain, src) {
-      return chain.then(function () { return loadScript(src); });
-    }, Promise.resolve()).then(function () {
-      startBlazor();
-    }).catch(function (err) {
+    var canvas = document.getElementById('theCanvas');
+    window.__runtimeLoad = (canUseWorker(canvas) ? startWorkerRuntime(canvas) : loadMainThreadRuntime()).catch(function (err) {
       window.reportBootError(String((err && err.stack) || err));
     });
     return window.__runtimeLoad;
@@ -280,9 +371,7 @@ if (new URLSearchParams(location.search).has('debug') && typeof HTMLCanvasElemen
   };
 }
 
-// The game asks to be driven from here: KNI's Blazor platform does not start
-// its own loop, and pacing it from managed code starves on Blazor's
-// synchronization context.
+// Main-thread fallback loop.
 window.__frames = 0;
 window.startGameLoop = function (dotnetRef) {
   // Without an initial resize, KNI keeps a 1280x720 buffer stretched over the

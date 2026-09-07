@@ -1,0 +1,372 @@
+// Game thread: KNI interop, Blazor, and the Tick loop. The UI thread keeps
+// Alpine and the <canvas> element; WebGL follows the WASM onto this worker.
+self.window = self;
+self.__errs = [];
+self.__bootFailed = false;
+self.__canvas = null;
+self.__listeners = {};
+
+var nativeAddEventListener = self.addEventListener.bind(self);
+var nativeRemoveEventListener = self.removeEventListener.bind(self);
+
+function isNativeEvent(type) {
+  return type === 'message' || type === 'error' || type === 'unhandledrejection' || type === 'offline' || type === 'online';
+}
+
+self.addEventListener = function (type, fn, options) {
+  if (isNativeEvent(type)) return nativeAddEventListener(type, fn, options);
+  var list = self.__listeners[type] || (self.__listeners[type] = []);
+  list.push(fn);
+};
+
+self.removeEventListener = function (type, fn, options) {
+  if (isNativeEvent(type)) return nativeRemoveEventListener(type, fn, options);
+  var list = self.__listeners[type];
+  if (!list) return;
+  self.__listeners[type] = list.filter(function (item) { return item !== fn; });
+};
+
+self.dispatchEvent = function (event) {
+  var type = event && event.type;
+  var list = self.__listeners[type] || [];
+  for (var i = 0; i < list.length; i++) {
+    list[i](event);
+  }
+  return true;
+};
+
+self.Node = {
+  ELEMENT_NODE: 1,
+  TEXT_NODE: 3,
+  COMMENT_NODE: 8,
+  DOCUMENT_NODE: 9,
+  DOCUMENT_FRAGMENT_NODE: 11,
+};
+function Document() {}
+function Element() {}
+function HTMLElement() {}
+function Comment() {}
+function Text() {}
+function DocumentFragment() {}
+self.Document = Document;
+self.Element = Element;
+self.HTMLElement = HTMLElement;
+self.Comment = Comment;
+self.Text = Text;
+self.DocumentFragment = DocumentFragment;
+HTMLElement.prototype = Object.create(Element.prototype);
+
+function fakeStyle() {
+  return {
+    setProperty: function (name, value) { this[name] = value; },
+    getPropertyValue: function (name) { return this[name] || ''; },
+    removeProperty: function (name) {
+      var value = this[name];
+      delete this[name];
+      return value || '';
+    },
+  };
+}
+
+function fakeElement() {
+  var el = Object.create(HTMLElement.prototype);
+  el.nodeType = 1;
+  el.parentNode = null;
+  el.style = fakeStyle();
+  el.childNodes = [];
+  el.children = [];
+  el.classList = { add: function () {}, remove: function () {}, contains: function () { return false; }, toggle: function () {} };
+  el.setAttribute = function () {};
+  el.getAttribute = function () { return null; };
+  el.hasAttribute = function () { return false; };
+  el.appendChild = function (child) {
+    this.childNodes.push(child);
+    if (child) child.parentNode = this;
+    return child;
+  };
+  el.removeChild = function (child) {
+    this.childNodes = this.childNodes.filter(function (node) { return node !== child; });
+    if (child) child.parentNode = null;
+    return child;
+  };
+  el.hasChildNodes = function () { return this.childNodes.length > 0; };
+  el.addEventListener = function () {};
+  el.removeEventListener = function () {};
+  el.querySelector = function () { return null; };
+  el.querySelectorAll = function () { return []; };
+  el.getBoundingClientRect = function () {
+    return { x: 0, y: 0, width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 };
+  };
+  el.focus = function () {};
+  return el;
+}
+
+self.document = new Document();
+self.document.nodeType = 9;
+self.document.parentNode = null;
+self.document.baseURI = '/';
+self.document.hidden = false;
+self.document.title = '';
+self.document.currentScript = null;
+self.document.readyState = 'complete';
+self.document.body = fakeElement();
+self.document.head = fakeElement();
+self.document.documentElement = fakeElement();
+self.document.hasChildNodes = function () { return this.childNodes.length > 0; };
+self.document.getElementById = function (id) {
+  return id === 'theCanvas' ? self.__canvas : null;
+};
+self.document.querySelector = function (selector) {
+  if (selector === '#theCanvas' || selector === 'canvas') return self.__canvas;
+  return null;
+};
+self.document.querySelectorAll = function (selector) {
+  var found = this.querySelector(selector);
+  return found ? [found] : [];
+};
+self.document.createElement = function () { return fakeElement(); };
+self.document.createElementNS = function () { return fakeElement(); };
+self.document.createComment = function (text) {
+  var node = new Comment();
+  node.nodeType = 8;
+  node.data = text || '';
+  node.textContent = text || '';
+  node.childNodes = [];
+  node.hasChildNodes = function () { return false; };
+  return node;
+};
+self.document.createTextNode = function (text) {
+  var node = new Text();
+  node.nodeType = 3;
+  node.data = text || '';
+  node.textContent = text || '';
+  node.childNodes = [];
+  node.hasChildNodes = function () { return false; };
+  return node;
+};
+self.document.createDocumentFragment = function () {
+  var node = new DocumentFragment();
+  node.childNodes = [];
+  node.appendChild = function (child) { this.childNodes.push(child); return child; };
+  node.hasChildNodes = function () { return this.childNodes.length > 0; };
+  return node;
+};
+self.document.createRange = function () {
+  return {
+    selectNodeContents: function () {},
+    setStart: function () {},
+    setEnd: function () {},
+    collapse: function () {},
+    deleteContents: function () {},
+    insertNode: function () {},
+    cloneRange: function () { return this; },
+  };
+};
+self.document.addEventListener = function () {};
+self.document.removeEventListener = function () {};
+self.document.hasFocus = function () { return !this.hidden; };
+self.document.location = self.location;
+self.document.URL = self.location && self.location.href;
+self.document.documentElement.appendChild(self.document.head);
+self.document.documentElement.appendChild(self.document.body);
+self.document.childNodes = [self.document.documentElement];
+
+self.innerWidth = 1280;
+self.innerHeight = 720;
+self.devicePixelRatio = 1;
+self.parent = self;
+self.opener = null;
+self.frameElement = null;
+self.scrollTo = function () {};
+self.history = {
+  state: null,
+  pushState: function () {},
+  replaceState: function () {},
+  go: function () {},
+  back: function () {},
+  forward: function () {},
+};
+
+function post(data) {
+  self.postMessage(data);
+}
+
+self.reportBootError = function (message) {
+  self.__bootFailed = true;
+  self.__errs.push(message);
+  post({ type: 'error', message: String(message).slice(0, 2000) });
+};
+
+self.reportBootStage = function (name) {
+  self.__stages = self.__stages || [];
+  self.__stages.push(name);
+  if (self.__boot) self.__boot.finishRuntime();
+  post({ type: 'stage', name: name });
+};
+
+self.clearBoot = function () {
+  if (self.__boot) self.__boot.finishRuntime();
+  post({ type: 'clear' });
+};
+
+self.__boot = {
+  setRuntime: function (loaded, total) { post({ type: 'setRuntime', loaded: loaded, total: total }); },
+  expectRuntime: function () { post({ type: 'expectRuntime' }); },
+  addRuntime: function () { post({ type: 'addRuntime' }); },
+  finishRuntime: function () { post({ type: 'finishRuntime' }); },
+  setAssets: function (loaded, total) { post({ type: 'setAssets', loaded: loaded, total: total }); },
+  addAsset: function () { post({ type: 'addAsset' }); },
+};
+
+self.addEventListener('error', function (e) {
+  self.reportBootError(String((e.error && e.error.stack) || e.message || e));
+});
+self.addEventListener('unhandledrejection', function (e) {
+  self.reportBootError('unhandled rejection: ' + String((e.reason && e.reason.stack) || e.reason));
+});
+
+var nativeConsoleError = console.error.bind(console);
+console.error = function () {
+  for (var i = 0; i < arguments.length; i++) {
+    var a = arguments[i];
+    if (a && (a.stack || a.message)) {
+      self.reportBootError(String(a.message || '') + '\n\n' + String(a.stack || ''));
+    } else if (typeof a === 'string' && a.indexOf('   at ') >= 0) {
+      self.reportBootError(a);
+    }
+  }
+  return nativeConsoleError.apply(null, arguments);
+};
+
+function attachCanvas(canvas, metrics) {
+  self.__canvas = canvas;
+  applyMetrics(metrics);
+  canvas.style = canvas.style || {};
+  canvas.focus = canvas.focus || function () {};
+  canvas.clientLeft = 0;
+  canvas.clientTop = 0;
+  canvas.getBoundingClientRect = function () {
+    var rect = self.__boundingRect || {
+      x: 0,
+      y: 0,
+      width: this.clientWidth || this.width || 0,
+      height: this.clientHeight || this.height || 0,
+    };
+    return {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      left: rect.x,
+      top: rect.y,
+      right: rect.x + rect.width,
+      bottom: rect.y + rect.height,
+    };
+  };
+}
+
+function applyMetrics(data) {
+  if (!data) return;
+  if (typeof data.innerWidth === 'number') self.innerWidth = data.innerWidth;
+  if (typeof data.innerHeight === 'number') self.innerHeight = data.innerHeight;
+  if (typeof data.devicePixelRatio === 'number') self.devicePixelRatio = data.devicePixelRatio;
+  if (typeof data.hidden === 'boolean') self.document.hidden = data.hidden;
+  if (data.baseURI) {
+    self.document.baseURI = data.baseURI;
+    try {
+      self.document.location = new URL(data.baseURI);
+      self.document.URL = self.document.location.href;
+    } catch (err) {}
+  }
+  if (data.boundingRect) self.__boundingRect = data.boundingRect;
+  if (self.__canvas) {
+    if (typeof data.clientWidth === 'number') self.__canvas.clientWidth = data.clientWidth;
+    if (typeof data.clientHeight === 'number') self.__canvas.clientHeight = data.clientHeight;
+  }
+}
+
+function resolveRuntimeUrl(src) {
+  return new URL(src, self.document.baseURI).href;
+}
+
+function resolveAgainstPage(url) {
+  if (typeof url !== 'string' || /^(?:[a-z]+:)?\/\//i.test(url) || url.indexOf('blob:') === 0 || url.indexOf('data:') === 0) {
+    return url;
+  }
+  return new URL(url, self.document.baseURI).href;
+}
+
+function installPageUrls() {
+  if (self.__pageUrlsPatched) return;
+  self.__pageUrlsPatched = true;
+  var nativeFetch = self.fetch;
+  self.fetch = function (input, init) {
+    if (typeof input === 'string') input = resolveAgainstPage(input);
+    return nativeFetch.call(self, input, init);
+  };
+  var nativeOpen = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function (method, url) {
+    if (typeof url === 'string') arguments[1] = resolveAgainstPage(url);
+    return nativeOpen.apply(this, arguments);
+  };
+}
+
+function startRuntime(data) {
+  applyMetrics(data);
+  attachCanvas(data.canvas, data);
+  if (data.debug && typeof OffscreenCanvas !== 'undefined') {
+    self.installDebugContext(OffscreenCanvas);
+  }
+  installPageUrls();
+  self.installAssetProgress();
+  try {
+    importScripts.apply(self, self.RUNTIME_SCRIPTS.map(resolveRuntimeUrl));
+  } catch (err) {
+    self.reportBootError(String((err && err.stack) || err));
+    return;
+  }
+  self.startBlazor();
+}
+
+function dispatchForwardedEvent(data) {
+  applyMetrics(data);
+  var event = {
+    type: data.name,
+    clientX: data.clientX || 0,
+    clientY: data.clientY || 0,
+    buttons: data.buttons || 0,
+    deltaX: data.deltaX || 0,
+    deltaY: data.deltaY || 0,
+    deltaZ: data.deltaZ || 0,
+    deltaMode: data.deltaMode || 0,
+    key: data.key || '',
+    keyCode: data.keyCode || 0,
+    location: data.location || 0,
+    gamepad: { index: data.gamepadIndex || 0 },
+    changedTouches: data.touches || [],
+    preventDefault: function () {},
+  };
+  self.dispatchEvent(event);
+}
+
+try {
+  importScripts('runtime.js');
+} catch (err) {
+  self.reportBootError(String((err && err.stack) || err));
+}
+
+self.onmessage = function (e) {
+  var data = e.data;
+  if (!data || typeof data !== 'object') return;
+  if (data.type === 'boot') {
+    startRuntime(data);
+    return;
+  }
+  if (data.type === 'event') {
+    dispatchForwardedEvent(data);
+    return;
+  }
+  if (data.type === 'visibility') {
+    self.document.hidden = !!data.hidden;
+  }
+};
