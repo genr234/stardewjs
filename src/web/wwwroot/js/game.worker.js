@@ -314,6 +314,7 @@ function installPageUrls() {
 function startRuntime(data) {
   applyMetrics(data);
   attachCanvas(data.canvas, data);
+  self.__profilerEnabled = !!data.profiler;
   if (data.debug && typeof OffscreenCanvas !== 'undefined') {
     self.installDebugContext(OffscreenCanvas);
   }
@@ -355,6 +356,37 @@ try {
   self.reportBootError(String((err && err.stack) || err));
 }
 
+function postProfilerSnapshot() {
+  var mem = typeof self.profilerMemory === 'function' ? self.profilerMemory() : {};
+  var managed = null;
+  if (self.__gameLoop && typeof self.readManagedSnapshot === 'function') {
+    managed = self.readManagedSnapshot(self.__gameLoop);
+  } else if (self.__gameLoop && typeof self.__gameLoop.invokeMethod === 'function') {
+    try {
+      var raw = self.__gameLoop.invokeMethod('Snapshot');
+      managed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (err) {}
+  }
+  var gcBytes = managed && (managed.gcBytes != null ? managed.gcBytes : managed.GcBytes);
+  var payload = {
+    type: 'profiler',
+    frames: self.__frames || 0,
+    loopAlive: true,
+    hidden: !!(self.document && self.document.hidden),
+    schedule: self.document && self.document.hidden ? 'timeout' : 'raf',
+  };
+  if (mem && mem.jsBytes != null) payload.jsBytes = mem.jsBytes;
+  if (mem && mem.wasmBytes != null) payload.wasmBytes = mem.wasmBytes;
+  if (managed) payload.managed = managed;
+  if (gcBytes != null) payload.gcBytes = gcBytes;
+  post(payload);
+}
+
+nativeAddEventListener('message', function (e) {
+  var data = e.data;
+  if (data && data.type === 'profiler-query') postProfilerSnapshot();
+});
+
 self.onmessage = function (e) {
   var data = e.data;
   if (!data || typeof data !== 'object') return;
@@ -368,5 +400,9 @@ self.onmessage = function (e) {
   }
   if (data.type === 'visibility') {
     self.document.hidden = !!data.hidden;
+    return;
+  }
+  if (data.type === 'profiler-query') {
+    postProfilerSnapshot();
   }
 };

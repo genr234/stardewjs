@@ -122,21 +122,218 @@
   // KNI's Blazor platform does not start its own loop. Pacing Tick() from
   // managed code starves on Blazor's synchronization context, so JS drives it.
   root.__frames = 0;
-  root.startGameLoop = function (dotnetRef) {
-    root.dispatchEvent(new Event('resize'));
-    function frame() {
+  function profilerEnabled() {
+    if (root.__profilerEnabled) return true;
+    try {
+      return !!(root.location && new URLSearchParams(root.location.search).has('profiler'));
+    } catch (err) {
+      return false;
+    }
+  }
+  function nowMs() {
+    return (root.performance && typeof root.performance.now === 'function')
+      ? root.performance.now()
+      : Date.now();
+  }
+  function wasmByteLength() {
+    var best = 0;
+    function consider(bytes) {
+      if (typeof bytes === 'number' && isFinite(bytes) && bytes > best) best = bytes;
+    }
+    function fromMemory(mem) {
       try {
-        if (!dotnetRef.invokeMethod('Tick')) { return; }
+        if (mem && mem.buffer && typeof mem.buffer.byteLength === 'number') consider(mem.buffer.byteLength);
+      } catch (err) {}
+    }
+    try {
+      fromMemory(root.wasmMemory);
+      var module = root.Module;
+      if (module) {
+        fromMemory(module.wasmMemory);
+        fromMemory(module.asm && module.asm.memory);
+        if (module.HEAP8 && module.HEAP8.buffer) consider(module.HEAP8.buffer.byteLength);
+        if (module.HEAPU8 && module.HEAPU8.buffer) consider(module.HEAPU8.buffer.byteLength);
+      }
+      var runtime = root.Blazor && root.Blazor.runtime;
+      if (runtime) {
+        fromMemory(runtime.memory);
+        fromMemory(runtime.wasmMemory);
+        if (typeof runtime.getMemory === 'function') {
+          try { fromMemory(runtime.getMemory()); } catch (err) {}
+        }
+        module = runtime.Module || runtime.module || module;
+        if (module) {
+          fromMemory(module.wasmMemory);
+          if (module.HEAPU8 && module.HEAPU8.buffer) consider(module.HEAPU8.buffer.byteLength);
+          if (module.HEAP8 && module.HEAP8.buffer) consider(module.HEAP8.buffer.byteLength);
+        }
+      }
+      if (typeof root.getDotnetRuntime === 'function') {
+        try {
+          var dotnet = root.getDotnetRuntime(0);
+          fromMemory(dotnet && dotnet.getMemory && dotnet.getMemory());
+          module = dotnet && (dotnet.Module || dotnet.module);
+          if (module && module.HEAPU8) consider(module.HEAPU8.buffer.byteLength);
+        } catch (err) {}
+      }
+    } catch (err) {}
+    return best || null;
+  }
+  root.profilerMemory = function () {
+    var jsBytes = null;
+    try {
+      var mem = root.performance && root.performance.memory;
+      if (mem && typeof mem.usedJSHeapSize === 'number' && mem.usedJSHeapSize > 0) {
+        jsBytes = mem.usedJSHeapSize;
+      }
+    } catch (err) {}
+    return { jsBytes: jsBytes, wasmBytes: wasmByteLength() };
+  };
+  root.__gameLoop = null;
+  function readManaged(dotnetRef) {
+    if (!dotnetRef || typeof dotnetRef.invokeMethod !== 'function') return null;
+    try {
+      var raw = dotnetRef.invokeMethod('Snapshot');
+      if (raw == null || raw === '') return null;
+      if (typeof raw === 'string') return JSON.parse(raw);
+      return JSON.parse(JSON.stringify(raw));
+    } catch (err) {
+      return null;
+    }
+  }
+  root.readManagedSnapshot = readManaged;
+  function emitProfiler(dotnetRef, stats) {
+    if (stats.loopAlive) stats.managed = readManaged(dotnetRef);
+    if (stats.managed && stats.managed.gcBytes != null) stats.gcBytes = stats.managed.gcBytes;
+    else if (stats.managed && stats.managed.GcBytes != null) stats.gcBytes = stats.managed.GcBytes;
+    var mem = root.profilerMemory && root.profilerMemory();
+    if (mem) {
+      if (mem.jsBytes != null) stats.jsBytes = mem.jsBytes;
+      if (mem.wasmBytes != null) stats.wasmBytes = mem.wasmBytes;
+    }
+    var payload = stats;
+    try {
+      payload = JSON.parse(JSON.stringify(stats));
+    } catch (err) {
+      payload = {
+        type: 'profiler',
+        frames: stats.frames || 0,
+        fps: stats.fps || 0,
+        fpsAvg: stats.fpsAvg || 0,
+        lastMs: stats.lastMs || 0,
+        avgMs: stats.avgMs || 0,
+        maxMs: stats.maxMs || 0,
+        loopAlive: !!stats.loopAlive,
+        schedule: stats.schedule,
+        hidden: !!stats.hidden,
+        jsBytes: stats.jsBytes,
+        wasmBytes: stats.wasmBytes,
+      };
+    }
+    try {
+      if (typeof importScripts === 'function' && typeof root.postMessage === 'function') {
+        root.postMessage(payload);
+        return;
+      }
+    } catch (err) {}
+    if (root.__profiler && typeof root.__profiler.update === 'function') {
+      root.__profiler.update(payload);
+    }
+  }
+  root.startGameLoop = function (dotnetRef) {
+    root.__gameLoop = dotnetRef;
+    root.dispatchEvent(new Event('resize'));
+    var last = nowMs();
+    var sampleAt = last;
+    var windowStart = last;
+    var windowFrames = 0;
+    var lastMs = 0;
+    var sumMs = 0;
+    var maxMs = 0;
+    var samples = 0;
+    var avgFps = 0;
+    var scheduleMode = 'raf';
+    function frame() {
+      var t0 = nowMs();
+      try {
+        if (!dotnetRef.invokeMethod('Tick')) {
+          if (profilerEnabled()) {
+            emitProfiler(dotnetRef, {
+              type: 'profiler',
+              frames: root.__frames,
+              fps: 0,
+              fpsAvg: avgFps,
+              lastMs: lastMs,
+              avgMs: samples ? sumMs / samples : 0,
+              maxMs: maxMs,
+              loopAlive: false,
+              schedule: scheduleMode,
+              hidden: !!(root.document && root.document.hidden),
+            });
+          }
+          return;
+        }
         root.__frames++;
       } catch (e) {
         console.error(e);
+        if (profilerEnabled()) {
+          emitProfiler(dotnetRef, {
+            type: 'profiler',
+            frames: root.__frames,
+            fps: 0,
+            fpsAvg: avgFps,
+            lastMs: lastMs,
+            avgMs: samples ? sumMs / samples : 0,
+            maxMs: maxMs,
+            loopAlive: false,
+            schedule: scheduleMode,
+            hidden: !!(root.document && root.document.hidden),
+          });
+        }
         return;
       }
+      var t1 = nowMs();
+      lastMs = t1 - t0;
+      sumMs += lastMs;
+      samples += 1;
+      if (lastMs > maxMs) maxMs = lastMs;
+      var dt = t1 - last;
+      last = t1;
+      var instantFps = dt > 0 ? 1000 / dt : 0;
+      windowFrames += 1;
+      if (t1 - windowStart >= 1000) {
+        avgFps = windowFrames * 1000 / (t1 - windowStart);
+        windowFrames = 0;
+        windowStart = t1;
+      }
+      try {
+        if (profilerEnabled() && t1 - sampleAt >= 250) {
+          sampleAt = t1;
+          emitProfiler(dotnetRef, {
+            type: 'profiler',
+            frames: root.__frames,
+            fps: instantFps,
+            fpsAvg: avgFps,
+            lastMs: lastMs,
+            avgMs: samples ? sumMs / samples : 0,
+            maxMs: maxMs,
+            loopAlive: true,
+            schedule: scheduleMode,
+            hidden: !!(root.document && root.document.hidden),
+          });
+        }
+      } catch (err) {}
       schedule(frame);
     }
     function schedule(fn) {
       var hidden = !!(root.document && root.document.hidden);
-      if (hidden) { setTimeout(fn, 16); } else { requestAnimationFrame(fn); }
+      if (hidden) {
+        scheduleMode = 'timeout';
+        setTimeout(fn, 16);
+      } else {
+        scheduleMode = 'raf';
+        requestAnimationFrame(fn);
+      }
     }
     schedule(frame);
   };

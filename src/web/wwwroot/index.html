@@ -18,6 +18,8 @@
     }
 
     #theCanvas {
+      position: relative;
+      z-index: 0;
       display: block;
       width: 100vw;
       height: 100vh;
@@ -51,6 +53,22 @@
 
     .boot-status {
       margin: 0 0 12px;
+    }
+
+    #boot-jigsaw {
+      display: block;
+      width: min(280px, 70vw);
+      height: auto;
+      aspect-ratio: 1;
+      margin: 0 auto 16px;
+      touch-action: none;
+      cursor: grab;
+      image-rendering: pixelated;
+      background: #0e0d0b;
+    }
+
+    #boot-jigsaw:active {
+      cursor: grabbing;
     }
 
     .boot-bar {
@@ -87,6 +105,64 @@
       text-align: left;
       font: inherit;
     }
+
+    #profiler {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 2147483647;
+      margin: 0;
+      padding: 8px 10px;
+      max-width: min(28rem, calc(100vw - 16px));
+      max-height: calc(100vh - 16px);
+      overflow: auto;
+      pointer-events: none;
+      color: #e8e0c8;
+      background: rgba(14, 13, 11, 0.82);
+      font: 11px/1.4 ui-monospace, Menlo, monospace;
+      transform: translateZ(0);
+      -webkit-transform: translateZ(0);
+    }
+
+    #profiler .profiler-charts {
+      display: grid;
+      gap: 6px;
+    }
+
+    #profiler .profiler-chart-wrap {
+      display: grid;
+      gap: 2px;
+    }
+
+    #profiler .profiler-chart-label {
+      color: #8a8370;
+      font-size: 10px;
+    }
+
+    #profiler .profiler-ind {
+      margin-right: 8px;
+    }
+
+    #profiler .profiler-ind::before {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 4px;
+      vertical-align: middle;
+      background: currentColor;
+    }
+
+    #profiler .profiler-ind[data-key="wasm"] { color: #e6c35c; }
+    #profiler .profiler-ind[data-key="js"] { color: #8ec8c8; }
+    #profiler .profiler-ind[data-key="gc"] { color: #c9a0dc; }
+
+    #profiler .profiler-chart {
+      display: block;
+      width: 240px;
+      height: 48px;
+      background: #0e0d0b;
+    }
   </style>
 </head>
 
@@ -95,6 +171,7 @@
   <div id="boot" x-data x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
     <div class="boot-panel" x-show="!$store.boot.failed">
       <p class="boot-status" id="boot-status" x-text="$store.boot.status">loading the .NET runtime</p>
+      <canvas id="boot-jigsaw" width="270" height="270"></canvas>
       <div class="boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
         :aria-valuenow="$store.boot.percent" aria-labelledby="boot-status">
         <div class="boot-bar-fill" :style="{ width: $store.boot.percent + '%' }"></div>
@@ -103,8 +180,29 @@
     </div>
     <pre class="boot-error" x-show="$store.boot.failed" x-text="$store.boot.error"></pre>
   </div>
+  <div id="profiler" hidden>
+    <div class="profiler-charts">
+      <div class="profiler-chart-wrap">
+        <span class="profiler-chart-label" data-label="fps">fps</span>
+        <canvas class="profiler-chart" data-series="fps" width="240" height="48"></canvas>
+      </div>
+      <div class="profiler-chart-wrap">
+        <span class="profiler-chart-label" data-label="ms">frame ms</span>
+        <canvas class="profiler-chart" data-series="ms" width="240" height="48"></canvas>
+      </div>
+      <div class="profiler-chart-wrap">
+        <span class="profiler-chart-label" data-label="mem">
+          <span class="profiler-ind" data-key="wasm">wasm</span>
+          <span class="profiler-ind" data-key="js">js</span>
+          <span class="profiler-ind" data-key="gc">gc</span>
+        </span>
+        <canvas class="profiler-chart" data-series="mem" width="240" height="48"></canvas>
+      </div>
+    </div>
+  </div>
 
   <script src="js/host.js"></script>
+  <script src="js/boot-jigsaw.js"></script>
 </body>
 
 </html>

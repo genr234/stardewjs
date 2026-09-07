@@ -208,6 +208,11 @@ console.error = function () {
       case 'addAsset':
         window.__boot.addAsset();
         break;
+      case 'profiler':
+        if (window.__profiler && typeof window.__profiler.update === 'function') {
+          window.__profiler.update(data);
+        }
+        break;
     }
   }
 
@@ -386,21 +391,39 @@ console.error = function () {
     });
     window.addEventListener('focus', function () { postEvent('focus', null); });
     window.addEventListener('blur', function () { postEvent('blur', null); });
-    window.addEventListener('mousemove', function (event) { postEvent('mousemove', event); });
-    window.addEventListener('mousedown', function (event) { postEvent('mousedown', event); });
-    window.addEventListener('mouseup', function (event) { postEvent('mouseup', event); });
-    window.addEventListener('wheel', function (event) { postEvent('wheel', event); });
+    function bootOverlayOpen() {
+      return !!document.getElementById('boot');
+    }
+    window.addEventListener('mousemove', function (event) {
+      if (bootOverlayOpen()) return;
+      postEvent('mousemove', event);
+    });
+    window.addEventListener('mousedown', function (event) {
+      if (bootOverlayOpen()) return;
+      postEvent('mousedown', event);
+    });
+    window.addEventListener('mouseup', function (event) {
+      if (bootOverlayOpen()) return;
+      postEvent('mouseup', event);
+    });
+    window.addEventListener('wheel', function (event) {
+      if (bootOverlayOpen()) return;
+      postEvent('wheel', event);
+    });
     window.addEventListener('keydown', function (event) { postEvent('keydown', event); });
     window.addEventListener('keyup', function (event) { postEvent('keyup', event); });
     window.addEventListener('touchstart', function (event) {
+      if (bootOverlayOpen()) return;
       event.preventDefault();
       postEvent('touchstart', event);
     }, { passive: false });
     window.addEventListener('touchmove', function (event) {
+      if (bootOverlayOpen()) return;
       event.preventDefault();
       postEvent('touchmove', event);
     }, { passive: false });
     window.addEventListener('touchend', function (event) {
+      if (bootOverlayOpen()) return;
       event.preventDefault();
       postEvent('touchend', event);
     }, { passive: false });
@@ -464,6 +487,7 @@ console.error = function () {
     boot.type = 'boot';
     boot.canvas = offscreen;
     boot.debug = new URLSearchParams(location.search).has('debug');
+    boot.profiler = new URLSearchParams(location.search).has('profiler');
     boot.baseURI = document.baseURI || location.href;
     worker.postMessage(boot, [offscreen]);
     forwardInput(worker, canvas);
@@ -478,6 +502,275 @@ console.error = function () {
     });
     return window.__runtimeLoad;
   };
+})();
+
+(function () {
+  var profilerOn = false;
+  try {
+    profilerOn = new URLSearchParams(location.search).has('profiler');
+  } catch (err) {}
+
+  function round1(n) {
+    return Math.round(Number(n) * 10) / 10;
+  }
+  function bytesToMb(bytes) {
+    if (bytes == null || bytes === '' || !isFinite(Number(bytes))) return null;
+    return Number(bytes) / 1048576;
+  }
+  function pageJsBytes() {
+    try {
+      var mem = typeof performance !== 'undefined' && performance.memory;
+      if (mem && typeof mem.usedJSHeapSize === 'number' && mem.usedJSHeapSize > 0) {
+        return mem.usedJSHeapSize;
+      }
+    } catch (err) {}
+    return null;
+  }
+  function managedGcBytes(stats) {
+    if (stats && stats.gcBytes != null && isFinite(Number(stats.gcBytes))) return Number(stats.gcBytes);
+    var managed = stats && stats.managed;
+    if (typeof managed === 'string') {
+      try { managed = JSON.parse(managed); } catch (err) { managed = null; }
+    }
+    if (!managed) return null;
+    var bytes = managed.gcBytes != null ? managed.gcBytes : managed.GcBytes;
+    return bytes == null ? null : Number(bytes);
+  }
+
+  var profilerStyle = [
+    'position:fixed',
+    'top:8px',
+    'left:8px',
+    'z-index:2147483647',
+    'margin:0',
+    'padding:8px 10px',
+    'max-width:min(28rem, calc(100vw - 16px))',
+    'max-height:calc(100vh - 16px)',
+    'overflow:auto',
+    'pointer-events:none',
+    'color:#e8e0c8',
+    'background:rgba(14,13,11,0.82)',
+    'font:11px/1.4 ui-monospace, Menlo, monospace',
+    'display:block',
+    'transform:translateZ(0)',
+    '-webkit-transform:translateZ(0)',
+  ].join(';');
+
+  var HISTORY = 90;
+  var history = { fps: [], ms: [], wasm: [], js: [], gc: [] };
+
+  function pushHistory(series, value) {
+    if (value == null || value === '' || !isFinite(Number(value))) return;
+    var list = history[series];
+    if (!list) return;
+    list.push(Number(value));
+    if (list.length > HISTORY) list.shift();
+  }
+
+  function seriesMax(list) {
+    var max = 0;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] > max) max = list[i];
+    }
+    return max;
+  }
+
+  function drawSeries(ctx, values, w, h, max, color, fill) {
+    if (!values.length) return;
+    function point(index) {
+      var x = values.length === 1 ? 0 : (index / (values.length - 1)) * (w - 1);
+      var y = h - 1 - (Math.min(values[index], max) / max) * (h - 2);
+      return { x: x, y: y };
+    }
+    if (fill) {
+      ctx.beginPath();
+      for (var j = 0; j < values.length; j++) {
+        var p = point(j);
+        if (j === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      var lastPt = point(values.length - 1);
+      ctx.lineTo(lastPt.x, h);
+      ctx.lineTo(0, h);
+      ctx.closePath();
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    ctx.beginPath();
+    for (var k = 0; k < values.length; k++) {
+      var q = point(k);
+      if (k === 0) ctx.moveTo(q.x, q.y);
+      else ctx.lineTo(q.x, q.y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  function drawChart(canvas, seriesList, opts) {
+    if (!canvas || typeof canvas.getContext !== 'function') return;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    var w = canvas.width || 240;
+    var h = canvas.height || 48;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#0e0d0b';
+    ctx.fillRect(0, 0, w, h);
+    var max = opts.max;
+    if (!(max > 0)) {
+      max = 1;
+      for (var s = 0; s < seriesList.length; s++) {
+        var peak = seriesMax(seriesList[s].values || []);
+        if (peak > max) max = peak;
+      }
+    }
+    if (opts.hline > 0 && opts.hline > max) max = opts.hline;
+    function yFor(value) {
+      return h - 1 - (Math.min(value, max) / max) * (h - 2);
+    }
+    function dashed(y, color) {
+      if (typeof ctx.setLineDash !== 'function') return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (opts.guide > 0) dashed(yFor(opts.guide), '#3a3832');
+    if (opts.hline > 0) dashed(yFor(opts.hline), '#d9d2c3');
+    for (var i = 0; i < seriesList.length; i++) {
+      drawSeries(ctx, seriesList[i].values, w, h, max, seriesList[i].color, seriesList[i].fill);
+    }
+  }
+
+  function fmtInd(value) {
+    return value == null ? 'n/a' : String(round1(value));
+  }
+
+  function paintCharts() {
+    var root = document.getElementById('profiler');
+    if (!root || typeof root.querySelector !== 'function') return;
+    var last = window.__profiler.last || {};
+    var windowMaxMs = seriesMax(history.ms);
+    var maxMs = last.maxMs > windowMaxMs ? last.maxMs : windowMaxMs;
+    drawChart(root.querySelector('[data-series="fps"]'), [
+      { values: history.fps, color: '#e6c35c', fill: 'rgba(230,195,92,0.22)' },
+    ], { max: 75, guide: 60 });
+    drawChart(root.querySelector('[data-series="ms"]'), [
+      { values: history.ms, color: '#8ec8c8', fill: 'rgba(142,200,200,0.22)' },
+    ], { max: 50, guide: 16.7, hline: maxMs });
+    drawChart(root.querySelector('[data-series="mem"]'), [
+      { values: history.wasm, color: '#e6c35c' },
+      { values: history.js, color: '#8ec8c8' },
+      { values: history.gc, color: '#c9a0dc' },
+    ], { max: 0 });
+    var fpsLabel = root.querySelector('[data-label="fps"]');
+    var msLabel = root.querySelector('[data-label="ms"]');
+    if (fpsLabel) fpsLabel.textContent = 'fps  ' + round1(last.fps || 0);
+    if (msLabel) msLabel.textContent = 'frame ms  ' + round1(last.lastMs || 0);
+    function setInd(key, value) {
+      var el = root.querySelector('.profiler-ind[data-key="' + key + '"]');
+      if (el) el.textContent = key + ' ' + fmtInd(value);
+    }
+    setInd('wasm', history.wasm.length ? history.wasm[history.wasm.length - 1] : null);
+    setInd('js', history.js.length ? history.js[history.js.length - 1] : null);
+    setInd('gc', history.gc.length ? history.gc[history.gc.length - 1] : null);
+  }
+
+  function ensureOverlay() {
+    var el = document.getElementById('profiler');
+    if (!el && document.createElement) {
+      el = document.createElement('div');
+      el.id = 'profiler';
+      var parent = document.body || document.documentElement;
+      if (parent && parent.appendChild) parent.appendChild(el);
+    }
+    if (!el) return null;
+    el.hidden = false;
+    if (el.removeAttribute) el.removeAttribute('hidden');
+    if (el.style) el.style.cssText = profilerStyle;
+    return el;
+  }
+
+  var tickMark = { frames: -1, at: 0, avgFps: 0 };
+
+  function nowMs() {
+    return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+  }
+
+  function mergeLoopStats(stats) {
+    var last = window.__profiler.last;
+    Object.keys(stats).forEach(function (key) {
+      if (stats[key] == null) return;
+      last[key] = stats[key];
+    });
+    if (last.jsBytes == null) last.jsBytes = pageJsBytes();
+    pushHistory('wasm', bytesToMb(last.wasmBytes));
+    pushHistory('js', bytesToMb(last.jsBytes));
+    pushHistory('gc', bytesToMb(managedGcBytes(last)));
+    if (typeof last.frames !== 'number') return;
+    var at = nowMs();
+    function sampleFrame() {
+      pushHistory('fps', last.fps);
+      pushHistory('ms', last.lastMs);
+    }
+    if (tickMark.frames < 0) {
+      tickMark.frames = last.frames;
+      tickMark.at = at;
+      sampleFrame();
+      return;
+    }
+    if (last.frames === tickMark.frames || at <= tickMark.at) return;
+    var dt = at - tickMark.at;
+    var df = last.frames - tickMark.frames;
+    tickMark.frames = last.frames;
+    tickMark.at = at;
+    if (stats.fps == null && dt > 0 && df >= 0) {
+      last.fps = df * 1000 / dt;
+      last.fpsAvg = tickMark.avgFps ? tickMark.avgFps * 0.6 + last.fps * 0.4 : last.fps;
+      tickMark.avgFps = last.fpsAvg;
+      if (df > 0) {
+        last.lastMs = dt / df;
+        if (!last.avgMs) last.avgMs = last.lastMs;
+        if (!last.maxMs || last.lastMs > last.maxMs) last.maxMs = last.lastMs;
+      }
+    }
+    sampleFrame();
+  }
+
+  window.__profiler = {
+    enabled: profilerOn,
+    last: {},
+    update: function (stats) {
+      if (!this.enabled) return;
+      if (stats) mergeLoopStats(stats);
+      var el = ensureOverlay();
+      if (!el) return;
+      paintCharts();
+    },
+  };
+
+  function pollWorker() {
+    if (!window.__gameWorker || typeof window.__gameWorker.postMessage !== 'function') return;
+    try {
+      window.__gameWorker.postMessage({ type: 'profiler-query' });
+    } catch (err) {}
+  }
+
+  if (profilerOn) {
+    window.__profiler.update({});
+    if (typeof setInterval === 'function') {
+      setInterval(function () {
+        pollWorker();
+        window.__profiler.update();
+      }, 250);
+    }
+  }
 })();
 
 // ?debug=1 preserves the framebuffer for readback. Keep the tab visible:
@@ -499,13 +792,109 @@ window.startGameLoop = function (dotnetRef) {
   // Without an initial resize, KNI keeps a 1280x720 buffer stretched over the
   // window and hit targets are misaligned.
   window.dispatchEvent(new Event('resize'));
+  function profilerOn() {
+    return !!(window.__profiler && window.__profiler.enabled);
+  }
+  function nowMs() {
+    return (typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+  }
+  function emitProfiler(stats) {
+    if (stats.loopAlive && profilerOn() && dotnetRef && typeof dotnetRef.invokeMethod === 'function') {
+      try {
+        var raw = dotnetRef.invokeMethod('Snapshot');
+        stats.managed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      } catch (err) {}
+    }
+    var mem = window.profilerMemory && window.profilerMemory();
+    if (mem) {
+      if (mem.jsBytes != null) stats.jsBytes = mem.jsBytes;
+      if (mem.wasmBytes != null) stats.wasmBytes = mem.wasmBytes;
+    }
+    if (window.__profiler && typeof window.__profiler.update === 'function') {
+      window.__profiler.update(stats);
+    }
+  }
+  var last = nowMs();
+  var sampleAt = last;
+  var windowStart = last;
+  var windowFrames = 0;
+  var lastMs = 0;
+  var sumMs = 0;
+  var maxMs = 0;
+  var samples = 0;
+  var avgFps = 0;
+  var scheduleMode = 'raf';
   function frame() {
+    var t0 = nowMs();
     try {
-      if (!dotnetRef.invokeMethod('Tick')) { return; }
+      if (!dotnetRef.invokeMethod('Tick')) {
+        if (profilerOn()) {
+          emitProfiler({
+            type: 'profiler',
+            frames: window.__frames,
+            fps: 0,
+            fpsAvg: avgFps,
+            lastMs: lastMs,
+            avgMs: samples ? sumMs / samples : 0,
+            maxMs: maxMs,
+            loopAlive: false,
+            schedule: scheduleMode,
+            hidden: !!(document && document.hidden),
+          });
+        }
+        return;
+      }
       window.__frames++;
     } catch (e) {
       console.error(e);
+      if (profilerOn()) {
+        emitProfiler({
+          type: 'profiler',
+          frames: window.__frames,
+          fps: 0,
+          fpsAvg: avgFps,
+          lastMs: lastMs,
+          avgMs: samples ? sumMs / samples : 0,
+          maxMs: maxMs,
+          loopAlive: false,
+          schedule: scheduleMode,
+          hidden: !!(document && document.hidden),
+        });
+      }
       return;
+    }
+    var t1 = nowMs();
+    lastMs = t1 - t0;
+    sumMs += lastMs;
+    samples += 1;
+    if (lastMs > maxMs) maxMs = lastMs;
+    var dt = t1 - last;
+    last = t1;
+    var instantFps = dt > 0 ? 1000 / dt : 0;
+    windowFrames += 1;
+    if (t1 - windowStart >= 1000) {
+      avgFps = windowFrames * 1000 / (t1 - windowStart);
+      windowFrames = 0;
+      windowStart = t1;
+    }
+    if (profilerOn() && t1 - sampleAt >= 250) {
+      sampleAt = t1;
+      try {
+        emitProfiler({
+          type: 'profiler',
+          frames: window.__frames,
+          fps: instantFps,
+          fpsAvg: avgFps,
+          lastMs: lastMs,
+          avgMs: samples ? sumMs / samples : 0,
+          maxMs: maxMs,
+          loopAlive: true,
+          schedule: scheduleMode,
+          hidden: !!(document && document.hidden),
+        });
+      } catch (err) {}
     }
     schedule(frame);
   }
@@ -513,7 +902,13 @@ window.startGameLoop = function (dotnetRef) {
   // the game entirely rather than pausing it. Fall back to a timer so a
   // background tab keeps running (slowly, as the browser clamps it).
   function schedule(fn) {
-    if (document.hidden) { setTimeout(fn, 16); } else { requestAnimationFrame(fn); }
+    if (document.hidden) {
+      scheduleMode = 'timeout';
+      setTimeout(fn, 16);
+    } else {
+      scheduleMode = 'raf';
+      requestAnimationFrame(fn);
+    }
   }
   schedule(frame);
 };

@@ -114,6 +114,19 @@ public static class WebProgram
 
 		[JSInvokable]
 		public long FrameCount() => _frames;
+
+		[JSInvokable]
+		public string Snapshot()
+		{
+			return System.Text.Json.JsonSerializer.Serialize(new
+			{
+				frames = _frames,
+				gcBytes = GC.GetTotalMemory(false),
+				gen0 = GC.CollectionCount(0),
+				gen1 = GC.CollectionCount(1),
+				gen2 = GC.CollectionCount(2),
+			});
+		}
 	}
 
 
