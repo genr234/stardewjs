@@ -11,6 +11,7 @@ mkdir -p "$ROOT/src/decompiled/StardewValley" "$ROOT/logs"
 "$ILSPY" -p -o "$ROOT/src/decompiled/StardewValley" -r "$G" "$G/Stardew Valley.dll" \
   > "$ROOT/logs/decompile-main.log" 2>&1
 python3 "$ROOT/scripts/apply_fixes.py"
+python3 "$ROOT/scripts/apply_kni_patches.py"
 cp "$ROOT/scripts/StardewValley.csproj" "$ROOT/src/decompiled/StardewValley/StardewValley.csproj"
 rm -f "$ROOT/src/decompiled/StardewValley/Stardew Valley.csproj"
 echo "Decompiled + patched. Build with: dotnet build '$ROOT/src/decompiled/StardewValley/StardewValley.csproj'"

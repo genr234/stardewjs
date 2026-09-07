@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    A facade named MonoGame.Framework that forwards the XNA types to KNI.
+
+    xTile, StardewValley.GameData and BmFont are shipped as compiled assemblies
+    whose public signatures mention Microsoft.Xna.Framework.Rectangle and friends.
+    Those names resolve to MonoGame.Framework in their metadata, so even though
+    KNI declares types with identical names, the compiler sees two unrelated types
+    and rejects roughly 370 call sites. Assembly identity, not API drift.
+
+    Forwarding fixes it without touching the vendored assemblies. Only the types
+    those three actually reference are listed; nothing else is needed.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>MonoGame.Framework</AssemblyName>
+    <AssemblyVersion>3.8.0.1641</AssemblyVersion>
+    <!-- xTile asks for 3.6.0.862 and the others for 3.8.0.1641; one identity at the
+         higher version satisfies both. GenerateAssemblyInfo must stay on or the
+         version attribute is never emitted and the assembly binds as 0.0.0.0. -->
+    <FileVersion>3.8.0.1641</FileVersion>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="nkast.Xna.Framework" Version="4.3.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Graphics" Version="4.3.9001" />
+    <PackageReference Include="nkast.Xna.Framework.Content" Version="4.3.9001" />
+  </ItemGroup>
+</Project>

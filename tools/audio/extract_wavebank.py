@@ -82,39 +82,19 @@ def build_wav(entry, payload):
     return struct.pack("<4sI4s", b"RIFF", 4 + len(chunks), b"WAVE") + chunks
 
 
-def ffmpeg_env():
-    """
-    Homebrew's ffmpeg here is linked against libx265.216 (x265 4.2) while 4.3 is
-    the linked keg, which only provides .217. Both are in the Cellar, so point
-    the loader at the older one for our own subprocesses rather than touching
-    the system install. Harmless when the library resolves normally.
-    """
-    env = dict(os.environ)
-    extra = [p for p in ("/opt/homebrew/Cellar/x265/4.2/lib", "/opt/homebrew/lib") if os.path.isdir(p)]
-    if extra:
-        existing = env.get("DYLD_FALLBACK_LIBRARY_PATH", "")
-        env["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(extra + ([existing] if existing else []))
-    return env
-
-
 def encode(entry, wav, out_dir, bitrate):
     path = os.path.join(out_dir, f"{entry['index']:04d}.opus")
     process = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", "pipe:0",
          "-c:a", "libopus", "-b:a", bitrate, "-vbr", "on", "-application", "audio", path],
-        input=wav, capture_output=True, env=FFMPEG_ENV,
+        input=wav, capture_output=True,
     )
     if process.returncode != 0:
         return None, process.stderr.decode(errors="replace").strip()
     return os.path.getsize(path), None
 
 
-FFMPEG_ENV = None
-
-
 def main():
-    global FFMPEG_ENV
-    FFMPEG_ENV = ffmpeg_env()
     parser = argparse.ArgumentParser()
     parser.add_argument("bank")
     parser.add_argument("--out", required=True)
