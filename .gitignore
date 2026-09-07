@@ -7,6 +7,7 @@ logs/
 bin/
 obj/
 node_modules/
+.playwright-cli/
 .DS_Store
 
 # Local symlink to the vendored game content, created by the web build.

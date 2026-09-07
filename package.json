@@ -1,0 +1,15 @@
+{
+  "name": "stardew-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "serve": "bun scripts/serve.ts",
+    "web": "bun scripts/web.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.1"
+  }
+}
