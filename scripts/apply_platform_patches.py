@@ -457,3 +457,81 @@ patch(
 )
 
 print("platform patches applied")
+
+# Commit both save files before the save enumerator reports completion. Yield
+# while IndexedDB runs; blocking here would deadlock the browser event loop.
+patch(
+    "StardewValley/SaveGame.cs",
+    "\t\tGame1.player.sleptInTemporaryBed.Value = false;\n\t\tif (CancelToTitle)",
+    """\t\tGame1.player.sleptInTemporaryBed.Value = false;
+#if WEB
+		Task persistTask = StardewValley.Web.BrowserSaveStorage.FlushAsync();
+		while (!persistTask.IsCompleted)
+		{
+			yield return 2;
+		}
+		persistTask.GetAwaiter().GetResult();
+#endif
+		if (CancelToTitle)""",
+)
+
+# The desktop save task drains its iterator without yielding to the browser.
+# Use the existing incremental path for WEB so IndexedDB can finish between ticks.
+patch(
+    "StardewValley/SaveGame.cs",
+    "\t\tIsProcessing = true;\n\t\tif (LocalMultiplayer.IsLocalMultiplayer())",
+    """\t\tIsProcessing = true;
+#if WEB
+		bool incrementalSave = true;
+#else
+		bool incrementalSave = LocalMultiplayer.IsLocalMultiplayer();
+#endif
+		if (incrementalSave)""",
+)
+patch(
+    "StardewValley/SaveGame.cs",
+    "\t\t\t\tyield return save.Current;\n\t\t\t}\n\t\t\tyield return 100;",
+    "\t\t\t\tyield return save.Current;\n\t\t\t}\n\t\t\tIsProcessing = false;\n\t\t\tyield return 100;",
+)
+
+# Farm deletion also needs to reach the persistent snapshot before the menu
+# removes the slot. Unwrap the async continuation instead of blocking a thread.
+patch(
+    "StardewValley.Menus/LoadGameMenu.cs",
+    '\t\t\t\t\tGame1.hooks.StartTask(_deleteTask, "Farm_Delete");',
+    '''\t\t\t\t\tGame1.hooks.StartTask(_deleteTask, "Farm_Delete");
+#if WEB
+					_deleteTask = _deleteTask.ContinueWith(async deleted =>
+					{
+						deleted.GetAwaiter().GetResult();
+						await StardewValley.Web.BrowserSaveStorage.FlushAsync();
+					}).Unwrap();
+#endif''',
+)
+patch(
+    "StardewValley.Menus/LoadGameMenu.cs",
+    "\t\t\t\tif (!_deleteTask.IsCompleted)",
+    """#if WEB
+				_deleteTask.GetAwaiter().GetResult();
+#endif
+				if (!_deleteTask.IsCompleted)""",
+)
+
+# browser-wasm has no ApplicationData folder, so GetFolderPath returns "" and
+# every save path comes out relative. Callers assume it is rooted:
+# LoadGameMenu combines the saves folder with entries that already contain it,
+# which only collapses back to the right path when those entries are absolute.
+# Root it at "/" so the browser's paths behave like every other platform's.
+patch(
+    "StardewValley/Program.cs",
+    '\t\tstring folderPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);\n'
+    '\t\tstring text = ((subfolder != null) ? Path.Combine(folderPath, "StardewValley", subfolder) : Path.Combine(folderPath, "StardewValley"));',
+    '\t\tstring folderPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);\n'
+    '#if WEB\n'
+    '\t\tif (string.IsNullOrEmpty(folderPath))\n'
+    '\t\t{\n'
+    '\t\t\tfolderPath = "/";\n'
+    '\t\t}\n'
+    '#endif\n'
+    '\t\tstring text = ((subfolder != null) ? Path.Combine(folderPath, "StardewValley", subfolder) : Path.Combine(folderPath, "StardewValley"));',
+)

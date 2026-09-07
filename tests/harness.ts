@@ -10,6 +10,7 @@ export const runtimeJs = await Bun.file(join(wwwroot, "js/runtime.js")).text();
 export const workerJs = await Bun.file(join(wwwroot, "js/game.worker.js")).text();
 
 export const RUNTIME_SCRIPTS = [
+  "js/save-storage.js",
   "_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js",
   "_content/nkast.Wasm.Dom/js/Window.10.0.3.js",
   "_content/nkast.Wasm.Dom/js/Document.10.0.3.js",

@@ -35,6 +35,9 @@ public static class WebProgram
 
 		try
 		{
+			Stage("restoring-saves");
+			await BrowserSaveStorage.RestoreAsync(_js);
+
 			Stage("constructing");
 			_runner = new GameRunner();
 			GameRunner.instance = _runner;
