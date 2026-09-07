@@ -12,6 +12,8 @@ function runHost() {
   const scheduled = [];
   const events = [];
   const readyListeners = [];
+  const appended = [];
+  const fetches = [];
   const document = {
     hidden: false,
     readyState: 'loading',
@@ -19,8 +21,19 @@ function runHost() {
       if (type === 'DOMContentLoaded') readyListeners.push(fn);
     },
     getElementById: id => elements.get(id),
-    createElement: () => ({ setAttribute(name, value) { this[name] = value; } }),
-    body: { appendChild: element => elements.set(element.id, element) },
+    createElement() {
+      return {
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value; this[name] = value; },
+      };
+    },
+    body: {
+      appendChild(element) {
+        appended.push(element);
+        if (element.id) elements.set(element.id, element);
+        return element;
+      },
+    },
   };
   function XMLHttpRequest() {}
   XMLHttpRequest.prototype.open = function (method, url) { this.url = url; };
@@ -32,20 +45,46 @@ function runHost() {
   const context = vm.createContext(Object.assign(window, {
     window, document, Event, URLSearchParams, location: { search: '' },
     console: { error() {} },
+    Promise,
+    Error,
+    fetch(url) {
+      fetches.push(url);
+      return Promise.resolve({ json: () => Promise.resolve({ resources: {} }) });
+    },
     requestAnimationFrame: callback => scheduled.push(callback),
     setTimeout: callback => scheduled.push(callback),
     XMLHttpRequest,
   }));
   vm.runInContext(hostJs, context);
-  return { window, document, elements, scheduled, events, readyListeners };
+  return { window, document, elements, scheduled, events, readyListeners, appended, fetches };
 }
 
-assert.match(html, /autostart="false"/);
+const RUNTIME_SCRIPTS = [
+  '_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js',
+  '_content/nkast.Wasm.Dom/js/Window.10.0.3.js',
+  '_content/nkast.Wasm.Dom/js/Document.10.0.3.js',
+  '_content/nkast.Wasm.Dom/js/Navigator.10.0.3.js',
+  '_content/nkast.Wasm.Dom/js/Gamepad.10.0.3.js',
+  '_content/nkast.Wasm.Dom/js/Media.10.0.3.js',
+  '_content/nkast.Wasm.Canvas/js/Canvas.10.0.3.js',
+  '_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.3.js',
+  '_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.3.js',
+  '_content/nkast.Wasm.Audio/js/Audio.10.0.3.js',
+  '_content/nkast.Wasm.XHR/js/XHR.10.0.3.js',
+  '_content/nkast.Wasm.XR/js/XR.10.0.3.js',
+  '_framework/blazor.webassembly.js',
+];
+
+assert.doesNotMatch(html, /_content\//);
+assert.doesNotMatch(html, /_framework\//);
+assert.doesNotMatch(html, /blazor\.webassembly/);
 assert.match(html, /js\/alpine\.min\.js/);
 assert.match(html, /js\/host\.js/);
 assert.match(html, /x-data/);
 assert.match(html, /\$store\.boot\.percent/);
 assert.match(html, /x-text="\$store\.boot\.status"/);
+assert.match(hostJs, /autostart/);
+assert.match(hostJs, /blazor\.webassembly\.js/);
 
 const first = runHost();
 const { window, elements, scheduled, events } = first;
@@ -117,5 +156,35 @@ progress.window.clearBoot();
 assert.equal(progress.window.__boot.getState().percent, 100);
 assert.equal(progress.window.__boot.getState().visible, false);
 assert.equal(progress.elements.has('boot'), false);
+
+async function waitUntil(predicate) {
+  for (let i = 0; i < 20; i++) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error('timed out waiting for host state');
+}
+
+// The first document is the UI; runtime scripts are injected after parse.
+const runtime = runHost();
+assert.equal(runtime.appended.length, 0);
+assert.equal(runtime.readyListeners.length, 1);
+runtime.readyListeners[0]();
+let started = false;
+for (const src of RUNTIME_SCRIPTS) {
+  const index = runtime.appended.length;
+  await waitUntil(() => runtime.appended.length === index + 1);
+  const script = runtime.appended[index];
+  assert.equal(script.src, src);
+  if (src.indexOf('blazor.webassembly.js') >= 0) {
+    assert.equal(script.attributes.autostart, 'false');
+    runtime.window.Blazor = { start() { started = true; return Promise.resolve(); } };
+  }
+  script.onload();
+}
+await waitUntil(() => started && runtime.fetches[0] === '_framework/blazor.boot.json');
+assert.equal(runtime.appended.length, RUNTIME_SCRIPTS.length);
+runtime.window.loadRuntime();
+assert.equal(runtime.appended.length, RUNTIME_SCRIPTS.length);
 
 console.log('Web host regression checks passed.');

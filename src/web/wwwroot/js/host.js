@@ -222,6 +222,49 @@ console.error = function () {
       begin(0);
     });
   };
+
+  // KNI interop must exist before Blazor evaluates; Blazor must exist before
+  // startBlazor(). Loaded here so the first document is only the UI shell.
+  var RUNTIME_SCRIPTS = [
+    '_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js',
+    '_content/nkast.Wasm.Dom/js/Window.10.0.3.js',
+    '_content/nkast.Wasm.Dom/js/Document.10.0.3.js',
+    '_content/nkast.Wasm.Dom/js/Navigator.10.0.3.js',
+    '_content/nkast.Wasm.Dom/js/Gamepad.10.0.3.js',
+    '_content/nkast.Wasm.Dom/js/Media.10.0.3.js',
+    '_content/nkast.Wasm.Canvas/js/Canvas.10.0.3.js',
+    '_content/nkast.Wasm.Canvas/js/Canvas2dContext.10.0.3.js',
+    '_content/nkast.Wasm.Canvas/js/CanvasGLContext.10.0.3.js',
+    '_content/nkast.Wasm.Audio/js/Audio.10.0.3.js',
+    '_content/nkast.Wasm.XHR/js/XHR.10.0.3.js',
+    '_content/nkast.Wasm.XR/js/XR.10.0.3.js',
+    '_framework/blazor.webassembly.js',
+  ];
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      script.src = src;
+      if (src.indexOf('blazor.webassembly.js') >= 0) {
+        script.setAttribute('autostart', 'false');
+      }
+      script.onload = function () { resolve(); };
+      script.onerror = function () { reject(new Error('failed to load ' + src)); };
+      document.body.appendChild(script);
+    });
+  }
+
+  window.loadRuntime = function () {
+    if (window.__runtimeLoad) return window.__runtimeLoad;
+    window.__runtimeLoad = RUNTIME_SCRIPTS.reduce(function (chain, src) {
+      return chain.then(function () { return loadScript(src); });
+    }, Promise.resolve()).then(function () {
+      startBlazor();
+    }).catch(function (err) {
+      window.reportBootError(String((err && err.stack) || err));
+    });
+    return window.__runtimeLoad;
+  };
 })();
 
 // ?debug=1 preserves the framebuffer for readback. Keep the tab visible:
@@ -264,11 +307,11 @@ window.startGameLoop = function (dotnetRef) {
   schedule(frame);
 };
 
-function tryStartBlazor() {
-  if (typeof Blazor !== 'undefined') startBlazor();
+function tryLoadRuntime() {
+  if (typeof window.loadRuntime === 'function') window.loadRuntime();
 }
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', tryStartBlazor);
+  document.addEventListener('DOMContentLoaded', tryLoadRuntime);
 } else {
-  tryStartBlazor();
+  tryLoadRuntime();
 }
