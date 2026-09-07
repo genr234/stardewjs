@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>Stardew Valley</AssemblyName>
+    <RootNamespace />
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS0108;CS0114;CS0162;CS0169;CS0219;CS0414;CS0618;CS0649;CS0672;CS1717;CS8509;SYSLIB0011;SYSLIB0051</NoWarn>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <GameLibs>$(MSBuildThisFileDirectory)../../../vendor/game/MacOS</GameLibs>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="StardewValley.Icon.ico" LogicalName="StardewValley.Icon.ico" />
+    <EmbeddedResource Include="StardewValley.Icon.bmp" LogicalName="StardewValley.Icon.bmp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="MonoGame.Framework"><HintPath>$(GameLibs)/MonoGame.Framework.dll</HintPath></Reference>
+    <Reference Include="StardewValley.GameData"><HintPath>$(GameLibs)/StardewValley.GameData.dll</HintPath></Reference>
+    <Reference Include="xTile"><HintPath>$(GameLibs)/xTile.dll</HintPath></Reference>
+    <Reference Include="Lidgren.Network"><HintPath>$(GameLibs)/Lidgren.Network.dll</HintPath></Reference>
+    <Reference Include="BmFont"><HintPath>$(GameLibs)/BmFont.dll</HintPath></Reference>
+    <Reference Include="CPExtBmFont"><HintPath>$(GameLibs)/CPExtBmFont.dll</HintPath></Reference>
+    <Reference Include="SkiaSharp"><HintPath>$(GameLibs)/SkiaSharp.dll</HintPath></Reference>
+    <Reference Include="TextCopy"><HintPath>$(GameLibs)/TextCopy.dll</HintPath></Reference>
+    <Reference Include="Steamworks.NET"><HintPath>$(GameLibs)/Steamworks.NET.dll</HintPath></Reference>
+    <Reference Include="GalaxyCSharp"><HintPath>$(GameLibs)/GalaxyCSharp.dll</HintPath></Reference>
+    <Reference Include="System.Data.HashFunction.Core"><HintPath>$(GameLibs)/System.Data.HashFunction.Core.dll</HintPath></Reference>
+    <Reference Include="System.Data.HashFunction.Interfaces"><HintPath>$(GameLibs)/System.Data.HashFunction.Interfaces.dll</HintPath></Reference>
+    <Reference Include="System.Data.HashFunction.xxHash"><HintPath>$(GameLibs)/System.Data.HashFunction.xxHash.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

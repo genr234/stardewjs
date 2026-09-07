@@ -1,0 +1,10 @@
+# Nothing derived from the game may be committed: assets, assemblies,
+# decompiled source, or built bundles.
+vendor/
+src/decompiled/
+build/
+logs/
+bin/
+obj/
+node_modules/
+.DS_Store
