@@ -64,7 +64,7 @@ public static class WebProgram
 		Console.WriteLine("[stage] " + name);
 		try
 		{
-			_js?.InvokeVoid("eval", "(window.__stages=window.__stages||[]).push(" + System.Text.Json.JsonSerializer.Serialize(name) + ")");
+			_js?.InvokeVoid("reportBootStage", name);
 		}
 		catch
 		{
@@ -92,21 +92,23 @@ public static class WebProgram
 		private long _frames;
 
 		[JSInvokable]
-		public void Tick()
+		public bool Tick()
 		{
 			if (_runner == null)
 			{
-				return;
+				return false;
 			}
 			try
 			{
 				_runner.Tick();
 				_frames++;
+				return true;
 			}
 			catch (Exception exception)
 			{
 				_runner = null;
 				Report("Game loop stopped after " + _frames + " frames: " + exception);
+				return false;
 			}
 		}
 
@@ -119,7 +121,7 @@ public static class WebProgram
 	{
 		try
 		{
-			_js?.InvokeVoid("eval", "document.getElementById('boot')?.remove()");
+			_js?.InvokeVoid("clearBoot");
 		}
 		catch (Exception exception)
 		{
