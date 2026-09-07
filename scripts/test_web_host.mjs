@@ -4,21 +4,20 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const html = readFileSync(new URL('../src/web/wwwroot/index.html', import.meta.url), 'utf8');
-const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
-assert.match(html, /autostart="false"/);
-assert.match(html, /js\/alpine\.min\.js/);
-assert.match(html, /x-data/);
-assert.match(html, /\$store\.boot\.percent/);
-assert.match(html, /x-text="\$store\.boot\.status"/);
-assert.doesNotMatch(html, /js\/host\.js/);
+const hostJs = readFileSync(new URL('../src/web/wwwroot/js/host.js', import.meta.url), 'utf8');
+assert.equal([...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].length, 0);
 
 function runHost() {
   const elements = new Map();
   const scheduled = [];
   const events = [];
+  const readyListeners = [];
   const document = {
     hidden: false,
-    addEventListener() {},
+    readyState: 'loading',
+    addEventListener(type, fn) {
+      if (type === 'DOMContentLoaded') readyListeners.push(fn);
+    },
     getElementById: id => elements.get(id),
     createElement: () => ({ setAttribute(name, value) { this[name] = value; } }),
     body: { appendChild: element => elements.set(element.id, element) },
@@ -37,13 +36,21 @@ function runHost() {
     setTimeout: callback => scheduled.push(callback),
     XMLHttpRequest,
   }));
-  for (const script of scripts) vm.runInContext(script, context);
-  return { window, document, elements, scheduled, events };
+  vm.runInContext(hostJs, context);
+  return { window, document, elements, scheduled, events, readyListeners };
 }
+
+assert.match(html, /autostart="false"/);
+assert.match(html, /js\/alpine\.min\.js/);
+assert.match(html, /js\/host\.js/);
+assert.match(html, /x-data/);
+assert.match(html, /\$store\.boot\.percent/);
+assert.match(html, /x-text="\$store\.boot\.status"/);
 
 const first = runHost();
 const { window, elements, scheduled, events } = first;
 
+// A failure after startup must restore a visible message, preserving full logs.
 window.reportBootError('runtime failure');
 assert.equal(elements.get('boot').textContent, 'runtime failure');
 assert.equal(elements.get('boot').role, 'alert');
@@ -53,6 +60,7 @@ assert.equal(window.__errs.length, 2);
 assert.equal(window.__bootFailed, true);
 assert.equal(window.__boot.getState().failed, true);
 
+// Count only completed ticks and stop scheduling when managed execution stops.
 let calls = 0;
 window.startGameLoop({ invokeMethod: () => ++calls === 1 });
 assert.deepEqual(events, ['resize']);
@@ -64,11 +72,13 @@ scheduled.shift()();
 assert.equal(window.__frames, 1);
 assert.equal(scheduled.length, 0);
 
+// An interop exception also stops the loop without counting a failed frame.
 window.startGameLoop({ invokeMethod() { throw new Error('interop failure'); } });
 scheduled.shift()();
 assert.equal(window.__frames, 1);
 assert.equal(scheduled.length, 0);
 
+// Progress updates after an error must not resurrect the loading bar.
 const errorText = elements.get('boot').textContent;
 window.__boot.setRuntime(4, 10);
 assert.equal(elements.get('boot').textContent, errorText);
