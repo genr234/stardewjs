@@ -192,7 +192,7 @@ export type WorkerRun = {
   scheduled: Array<() => void>;
 };
 
-export function runWorker(): WorkerRun {
+export function runWorker(options: { search?: string } = {}): WorkerRun {
   const imported: string[] = [];
   const posted: any[] = [];
   const scheduled: Array<() => void> = [];
@@ -216,7 +216,11 @@ export function runWorker(): WorkerRun {
     URL,
     Event,
     URLSearchParams,
-    location: { href: "http://localhost/js/game.worker.js", origin: "http://localhost" },
+    location: {
+      href: "http://localhost/js/game.worker.js" + (options.search ?? ""),
+      origin: "http://localhost",
+      search: options.search ?? "",
+    },
     fetch(url: string) {
       fetches.push(url);
       return Promise.resolve({ json: () => Promise.resolve({ resources: {} }) });
@@ -228,7 +232,9 @@ export function runWorker(): WorkerRun {
       for (const raw of urls) {
         const url = String(raw);
         imported.push(url);
-        if (url === "runtime.js" || url.endsWith("/runtime.js")) {
+        // The build token rides along as a query; match on the path.
+        const path = url.split("?")[0]!;
+        if (path === "runtime.js" || path.endsWith("/runtime.js")) {
           vm.runInContext(runtimeJs, context);
         }
         if (url.includes("blazor.webassembly.js")) {

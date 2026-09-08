@@ -9,7 +9,7 @@ describe("worker host", () => {
     runtime.readyListeners[0]?.();
     expect(runtime.appended).toHaveLength(0);
     expect(runtime.workers).toHaveLength(1);
-    expect(runtime.workers[0].url).toBe("js/game.worker.js");
+    expect(runtime.workers[0].url).toMatch(/^js\/game\.worker\.js\?v=\d+$/);
     expect(runtime.canvas.transferred).toBe(true);
     expect(runtime.workers[0].posted).toHaveLength(1);
     expect(runtime.workers[0].posted[0].data.type).toBe("boot");
@@ -216,5 +216,16 @@ describe("worker host", () => {
     expect(sample.frames).toBe(2);
     expect(sample.loopAlive).toBe(true);
     expect(sample.managed.frames).toBe(2);
+  });
+
+  test("the worker carries the page's build token onto everything it imports", () => {
+    const worker = runWorker({ search: "?v=12345" });
+    worker.context.startRuntime({ canvas: {}, baseURI: "http://localhost/" });
+
+    expect(worker.imported).toContain("runtime.js?v=12345");
+    for (const src of RUNTIME_SCRIPTS.filter((script) => script.startsWith("js/"))) {
+      expect(worker.imported).toContain("http://localhost/" + src + "?v=12345");
+    }
+    expect(worker.imported.some((url) => url.includes("_framework/") && url.includes("?v="))).toBe(false);
   });
 });

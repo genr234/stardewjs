@@ -12,7 +12,11 @@ describe("main-thread fallback", () => {
       const src = fallbackScripts[i]!;
       await waitUntil(() => fallback.appended.length === i + 1);
       const script = fallback.appended[i];
-      expect(script.src).toBe(src);
+      // On this path the scripts are page <script> tags, which a reload does
+      // refetch, so only the ones runtime.js pulls in carry the build token -
+      // runtime.js itself is loaded before the helper that stamps them exists.
+      if (i > 0 && src.startsWith("js/")) expect(script.src).toBe(src + "?v=" + fallback.window.__runtimeVersion);
+      else expect(script.src).toBe(src);
       if (src.includes("runtime.js")) {
         runInHost(runtimeJs, fallback.window);
       }

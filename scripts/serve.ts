@@ -20,6 +20,10 @@ export type HostOptions = HostRoots & {
 
 const LARGE_PATH = /(?:^|\/)(?:Content|Audio|_framework|_content)(?:\/|$)/i;
 
+// App files must not be cached: importScripts would keep running a stale
+// js/*.js. Bulk assets are immutable.
+const IMMUTABLE_PATH = /(?:^|\/)(?:Content|_framework|_content)(?:\/|$)|\.opus$/i;
+
 export function findFrameworkRoot(webProjectDir: string): string | null {
   const bin = join(webProjectDir, "bin");
   if (!existsSync(bin)) return null;
@@ -92,6 +96,10 @@ export async function handleRequest(
   const file = Bun.file(filePath);
   const headers = new Headers(ISOLATION_HEADERS);
   headers.set("Content-Type", contentTypeFor(filePath, file.type));
+  if (!IMMUTABLE_PATH.test(url.pathname)) {
+    // No validator is sent, so this means re-fetch; these files are small.
+    headers.set("Cache-Control", "no-cache");
+  }
   return new Response(file, { headers });
 }
 

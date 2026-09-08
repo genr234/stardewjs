@@ -286,7 +286,7 @@ function applyMetrics(data) {
 }
 
 function resolveRuntimeUrl(src) {
-  return new URL(src, self.document.baseURI).href;
+  return new URL(self.versionedRuntimeUrl(src), self.document.baseURI).href;
 }
 
 function resolveAgainstPage(url) {
@@ -350,8 +350,11 @@ function dispatchForwardedEvent(data) {
   self.dispatchEvent(event);
 }
 
+// Carry the page's cache-busting token on to runtime.js and its imports.
+self.__runtimeVersion = new URLSearchParams(self.location.search).get('v') || '';
+
 try {
-  importScripts('runtime.js');
+  importScripts(self.__runtimeVersion ? 'runtime.js?v=' + self.__runtimeVersion : 'runtime.js');
 } catch (err) {
   self.reportBootError(String((err && err.stack) || err));
 }

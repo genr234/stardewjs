@@ -20,6 +20,14 @@
   ];
   root.RUNTIME_SCRIPTS = RUNTIME_SCRIPTS;
 
+  // importScripts reads the HTTP cache even across reloads, so a stale script
+  // shows up as "undefined" interop calls. Blazor's own assets are already
+  // versioned and left alone.
+  root.versionedRuntimeUrl = function (src) {
+    var version = root.__runtimeVersion;
+    return version && src.indexOf('js/') === 0 ? src + '?v=' + version : src;
+  };
+
   function isGameAsset(url) {
     var value = String(url);
     return /(?:^|\/)Content\//.test(value) || /ContentHashes\.json/i.test(value);
@@ -87,7 +95,7 @@
 
   root.loadRuntimeScripts = function () {
     return RUNTIME_SCRIPTS.reduce(function (chain, src) {
-      return chain.then(function () { return loadScript(src); });
+      return chain.then(function () { return loadScript(root.versionedRuntimeUrl(src)); });
     }, Promise.resolve());
   };
 

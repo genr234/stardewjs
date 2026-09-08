@@ -1,5 +1,9 @@
-// Surface managed exceptions on the page instead of only in the console;
-// a WASM failure otherwise looks like a blank canvas.
+// Identifies this page load, and is stamped onto the scripts the game worker
+// imports. The worker reads them through importScripts, which uses the HTTP
+// cache and is not reliably bypassed by reloading the page, so without a token
+// an edited js/*.js can keep running as its previous version.
+window.__runtimeVersion = window.__runtimeVersion || String(Date.now());
+
 window.__errs = [];
 window.reportBootError = function (message) {
   window.__bootFailed = true;
@@ -475,7 +479,11 @@ console.error = function () {
     }
     var worker;
     try {
-      worker = new Worker('js/game.worker.js');
+      worker = new Worker(
+        window.__runtimeVersion
+          ? 'js/game.worker.js?v=' + window.__runtimeVersion
+          : 'js/game.worker.js',
+      );
     } catch (err) {
       return loadMainThreadRuntime();
     }

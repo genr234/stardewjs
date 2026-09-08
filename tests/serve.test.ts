@@ -51,6 +51,21 @@ describe("static host", () => {
     expect(missing.status).toBe(404);
   });
 
+  test("the app's own files are served without caching, the bulk assets are not", async () => {
+    // A worker kept running a cached js/audio.js across an edit, which looked
+    // like a missing function rather than a stale file.
+    for (const path of ["/", "/index.html", "/js/host.js"]) {
+      const res = await server.fetch(new Request("http://localhost" + path));
+      expect(res.headers.get("Cache-Control")).toBe("no-cache");
+    }
+    // The 544 MB of assets keep whatever caching the browser would give them.
+    for (const path of ["/Content/Maps/Town.xnb", "/Audio/main/0005.opus"]) {
+      const res = await server.fetch(new Request("http://localhost" + path));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Cache-Control")).toBeNull();
+    }
+  });
+
   test("rejects path traversal", async () => {
     const paths = ["/../package.json", "/js/../../package.json", "/%2e%2e/package.json"];
     for (const path of paths) {
