@@ -42,6 +42,8 @@ public static class SoundBankDump
 			categoriesByIndex[category.Value] = category.Key;
 		}
 
+		RpcCurveInfo[] rpcCurves = ReadRpcCurves(engine);
+
 		var mapped = new SortedDictionary<string, object>(StringComparer.Ordinal);
 		int withWaves = 0;
 		int looping = 0;
@@ -64,6 +66,13 @@ public static class SoundBankDump
 					? categoriesByIndex[(int)cue.Category.Value]
 					: null,
 				Loop = cue.Loop,
+				Volume = (cue.SoundVolume ?? 1f) * (cue.ClipVolume ?? 1f),
+				Filter = cue.Filter,
+				Rpc = cue.RpcCurves?
+					.Where(index => index >= 0 && index < rpcCurves.Length)
+					.Select(index => rpcCurves[index])
+					.Where(curve => curve != null)
+					.ToArray(),
 				Tracks = cue.References
 					.Distinct()
 					.Select(reference => new
@@ -76,15 +85,89 @@ public static class SoundBankDump
 			};
 		}
 
-		var document = new { WaveBanks = bankNames, Cues = mapped };
+		var document = new { WaveBanks = bankNames, CueVariables = ReadCueVariableDefaults(engine), Cues = mapped };
 		Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-		File.WriteAllText(outputPath, JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true }));
+		File.WriteAllText(outputPath, JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true, IncludeFields = true }));
 
 		Console.WriteLine($"wave banks: {string.Join(", ", bankNames)}");
 		Console.WriteLine($"{mapped.Count} cues, {withWaves} resolved to wave entries, {looping} looping -> {outputPath}");
 	}
 
-	/// <summary>What a single cue turned out to be made of.</summary>
+	/// <summary>Not all zero: wind's pitch curve depends on "Pitch"'s default.</summary>
+	private static SortedDictionary<string, float> ReadCueVariableDefaults(AudioEngine engine)
+	{
+		var defaults = new SortedDictionary<string, float>(StringComparer.Ordinal);
+		foreach (object variable in (Array)Field(engine, "_cueVariables"))
+		{
+			defaults[(string)FieldOf(variable, "Name")] = (float)FieldOf(variable, "InitValue");
+		}
+		return defaults;
+	}
+
+	private static RpcCurveInfo[] ReadRpcCurves(AudioEngine engine)
+	{
+		Array curves = (Array)Field(engine, "RpcCurves");
+		var globals = (Array)Field(engine, "_variables");
+		var cueScoped = (Array)Field(engine, "_cueVariables");
+
+		string VariableName(Array table, int index)
+		{
+			if (index < 0 || index >= table.Length)
+			{
+				return null;
+			}
+			object variable = table.GetValue(index);
+			return (string)variable.GetType().GetField("Name", AllMembers)!.GetValue(variable);
+		}
+
+		var result = new RpcCurveInfo[curves.Length];
+		for (int i = 0; i < curves.Length; i++)
+		{
+			object curve = curves.GetValue(i);
+			bool isGlobal = (bool)FieldOf(curve, "IsGlobal");
+			int variable = (int)FieldOf(curve, "Variable");
+			var points = (Array)FieldOf(curve, "Points");
+			if (points == null || points.Length == 0)
+			{
+				continue;
+			}
+
+			var mappedPoints = new List<float[]>(points.Length);
+			foreach (object point in points)
+			{
+				mappedPoints.Add(new[]
+				{
+					(float)FieldOf(point, "Position"),
+					(float)FieldOf(point, "Value")
+				});
+			}
+
+			result[i] = new RpcCurveInfo
+			{
+				Variable = VariableName(isGlobal ? globals : cueScoped, variable),
+				Parameter = FieldOf(curve, "Parameter").ToString(),
+				Global = isGlobal,
+				Points = mappedPoints.ToArray()
+			};
+		}
+		return result;
+	}
+
+	private static object FieldOf(object instance, string name) =>
+		instance.GetType().GetField(name, AllMembers | BindingFlags.Static)?.GetValue(instance)
+			?? throw new MissingFieldException(instance.GetType().Name, name);
+
+	private sealed class RpcCurveInfo
+	{
+		public string Variable;
+
+		public string Parameter;
+
+		public bool Global;
+
+		public float[][] Points;
+	}
+
 	private sealed class CueInfo
 	{
 		public readonly List<(int Bank, int Track)> References = new List<(int, int)>();
@@ -92,6 +175,24 @@ public static class SoundBankDump
 		public uint? Category;
 
 		public bool Loop;
+
+	/// <summary>Linear amplitude.</summary>
+		public float? SoundVolume;
+
+		public float? ClipVolume;
+
+		public FilterInfo Filter;
+
+		public int[] RpcCurves;
+	}
+
+	private sealed class FilterInfo
+	{
+		public string Mode;
+
+		public float Q;
+
+		public int Frequency;
 	}
 
 	/// <summary>
@@ -111,6 +212,20 @@ public static class SoundBankDump
 			return;
 		}
 
+		if (node is XactClip xactClip)
+		{
+			found.ClipVolume ??= xactClip.DefaultVolume;
+			if (xactClip.FilterEnabled && found.Filter == null)
+			{
+				found.Filter = new FilterInfo
+				{
+					Mode = xactClip.FilterMode.ToString(),
+					Q = xactClip.FilterQ,
+					Frequency = xactClip.FilterFrequency
+				};
+			}
+		}
+
 		switch (node)
 		{
 			case PlayWaveVariant variant:
@@ -122,6 +237,11 @@ public static class SoundBankDump
 
 			case XactSoundBankSound sound:
 				found.Category ??= sound.categoryID;
+				found.SoundVolume ??= sound.volume;
+				if (found.RpcCurves == null && sound.rpcCurves is { Length: > 0 })
+				{
+					found.RpcCurves = sound.rpcCurves;
+				}
 				if (!sound.complexSound)
 				{
 					found.References.Add((sound.waveBankIndex, sound.trackIndex));

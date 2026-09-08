@@ -150,20 +150,11 @@ public class BrowserCue : ICue
 
 	private bool _stopped;
 
-	/// <summary>XACT cue variables the game sets, kept because it reads them back.</summary>
-	private readonly Dictionary<string, float> _variables = new Dictionary<string, float>();
-
 	/// <summary>
-	/// The "Volume" cue variable, 0-100, defaulting to full.
-	///
-	/// In XACT this drives an RPC curve on the sound's volume, and the game leans
-	/// on it heavily: ambient loops like crickets, rain and waterfalls are started
-	/// once and left running, then made audible or silent through this variable
-	/// rather than being stopped. It also folds in the ambient volume option, so a
-	/// cue that ignores it plays at full volume even with that slider at zero.
-	/// The curve itself is not modelled - this scales amplitude linearly.
+	/// The game reads these back and RPC curves evaluate against them; ambient
+	/// loops are silenced via "Volume" and rain is muffled via "Frequency".
 	/// </summary>
-	private float _volumeVariable = 100f;
+	private readonly Dictionary<string, float> _variables = new Dictionary<string, float>();
 
 	public BrowserCue(string name)
 	{
@@ -190,8 +181,8 @@ public class BrowserCue : ICue
 	/// <inheritdoc />
 	public bool IsStopping => false;
 
-	/// <summary>No RPC curves are modelled, so the game's pitch always applies.</summary>
-	public bool IsPitchBeingControlledByRPC => false;
+	public bool IsPitchBeingControlledByRPC =>
+		BrowserAudio.Invoke<bool>("browserAudio.pitchControlledByRpc", Name);
 
 	/// <inheritdoc />
 	public float Volume
@@ -213,14 +204,10 @@ public class BrowserCue : ICue
 			_pitch = value;
 			if (_handle != 0)
 			{
-				BrowserAudio.InvokeVoid("browserAudio.setRate", _handle, PlaybackRate);
+				BrowserAudio.InvokeVoid("browserAudio.setPitch", _handle, _pitch);
 			}
 		}
 	}
-
-	private float PlaybackRate => (float)Math.Pow(2.0, _pitch);
-
-	private float EffectiveVolume => _volume * Math.Clamp(_volumeVariable / 100f, 0f, 1f);
 
 	/// <inheritdoc />
 	public void Play()
@@ -230,7 +217,7 @@ public class BrowserCue : ICue
 			Stop(AudioStopOptions.Immediate);
 		}
 		_stopped = false;
-		_handle = BrowserAudio.Invoke<int>("browserAudio.play", Name, EffectiveVolume, PlaybackRate);
+		_handle = BrowserAudio.Invoke<int>("browserAudio.play", Name, _volume, _pitch, _variables);
 	}
 
 	/// <inheritdoc />
@@ -272,10 +259,9 @@ public class BrowserCue : ICue
 	public void SetVariable(string var, float val)
 	{
 		_variables[var] = val;
-		if (var == "Volume")
+		if (_handle != 0)
 		{
-			_volumeVariable = val;
-			PushVolume();
+			BrowserAudio.InvokeVoid("browserAudio.setVariable", _handle, var, val);
 		}
 	}
 
@@ -283,11 +269,11 @@ public class BrowserCue : ICue
 	{
 		if (_handle != 0)
 		{
-			BrowserAudio.InvokeVoid("browserAudio.setVolume", _handle, EffectiveVolume);
+			BrowserAudio.InvokeVoid("browserAudio.setVolume", _handle, _volume);
 		}
 	}
 
-	/// <inheritdoc />
+	/// <summary>Unset variables read as 0, matching the bank's starting values.</summary>
 	public float GetVariable(string var)
 	{
 		return _variables.TryGetValue(var, out float value) ? value : 0f;

@@ -4,7 +4,6 @@
 // In the main-thread fallback both halves share this global directly.
 (function (root) {
   var context = null;
-  var categories = Object.create(null);
   var buffers = new Map();
   var voices = new Map();
 
@@ -19,20 +18,6 @@
     }
     if (context.state === 'suspended') context.resume();
     return context;
-  }
-
-  function categoryGain(name) {
-    var gain = categories[name];
-    if (!gain) {
-      gain = { volume: 1, node: null };
-      categories[name] = gain;
-    }
-    if (!gain.node && context) {
-      gain.node = context.createGain();
-      gain.node.gain.value = gain.volume;
-      gain.node.connect(context.destination);
-    }
-    return gain;
   }
 
   function load(url) {
@@ -58,6 +43,21 @@
     voice.source.onended = null;
     voice.source.disconnect();
     voice.gain.disconnect();
+    if (voice.filter) voice.filter.disconnect();
+  }
+
+  // A cue's XACT filter, rebuilt each time the voice starts. The cutoff and Q
+  // are whatever the RPC curves last evaluated to - this is what muffles indoor
+  // rain rather than merely quieting it.
+  function applyFilter(voice, filter) {
+    if (!filter || !voice.filter) return;
+    if (filter.frequency != null) {
+      // Web Audio rejects a cutoff above Nyquist, which XACT's 20 kHz ceiling
+      // can exceed on a 32 kHz context.
+      var ceiling = context.sampleRate / 2 - 1;
+      voice.filter.frequency.value = Math.max(1, Math.min(ceiling, filter.frequency));
+    }
+    if (filter.q != null) voice.filter.Q.value = filter.q;
   }
 
   // Playback starts a decode behind the game's back, so a cue can be stopped
@@ -74,6 +74,7 @@
       startedAt: 0,
       source: null,
       gain: null,
+      filter: null,
     };
     if (voice && voice.source) disconnect(voice);
     voices.set(handle, placeholder);
@@ -92,8 +93,19 @@
         source.playbackRate.value = command.rate || 1;
         var gain = context.createGain();
         gain.gain.value = command.volume == null ? 1 : command.volume;
-        source.connect(gain);
-        gain.connect(categoryGain(command.category).node);
+        if (command.filter) {
+          current.filter = context.createBiquadFilter();
+          current.filter.type = command.filter.type;
+          applyFilter(current, command.filter);
+          source.connect(current.filter);
+          current.filter.connect(gain);
+        } else {
+          source.connect(gain);
+        }
+        // The category slider is already folded into command.volume, so there is
+        // no bus here: XACT clamps the product, and a bus would clamp only the
+        // half of it that came before.
+        gain.connect(context.destination);
         source.onended = function () {
           if (voices.get(handle) === current) {
             voices.delete(handle);
@@ -157,26 +169,18 @@
           }
           break;
 
-        case 'volume':
+        // Volume, rate and filter move together: they are all outputs of the same
+        // mix, recomputed whenever the game changes a cue variable.
+        case 'params':
           voice = voices.get(command.handle);
           if (voice) {
             voice.command.volume = command.volume;
-            if (voice.gain) voice.gain.gain.value = command.volume;
-          }
-          break;
-
-        case 'rate':
-          voice = voices.get(command.handle);
-          if (voice) {
             voice.command.rate = command.rate;
+            voice.command.filter = command.filter;
+            if (voice.gain) voice.gain.gain.value = command.volume;
             if (voice.source) voice.source.playbackRate.value = command.rate;
+            applyFilter(voice, command.filter);
           }
-          break;
-
-        case 'category':
-          var category = categoryGain(command.category);
-          category.volume = command.volume;
-          if (category.node) category.node.gain.value = command.volume;
           break;
 
         case 'stopAll':
