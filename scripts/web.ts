@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { join } from "node:path";
-import { DEFAULT_PORT, findFrameworkRoot, startHost } from "./serve.ts";
+import { DEFAULT_PORT, findFrameworkRoot, openGate, startHost } from "./serve.ts";
 
 const repoRoot = join(import.meta.dir, "..");
 const wwwroot = join(repoRoot, "src/web/wwwroot");
@@ -21,9 +21,17 @@ if (!frameworkRoot) {
   process.exit(1);
 }
 
+const gate = await openGate(repoRoot).catch((err) => {
+  console.error(String(err));
+  console.error("Set OWNERSHIP_REFERENCE to your own `Stardew Valley.dll` to serve the game.");
+  process.exit(1);
+});
+
 const server = startHost({
   wwwroot,
   frameworkRoot,
   port: Number(process.env.PORT || DEFAULT_PORT),
+  gate,
 });
 console.log(`Web host at ${server.url}`);
+console.log(`Players verify against ${gate.referencePath}`);

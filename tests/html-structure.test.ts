@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { html, hostJs, jigsawJs, runtimeJs, RUNTIME_SCRIPTS } from "./harness.ts";
+import { html, hostJs, jigsawJs, ownershipJs, runtimeJs, RUNTIME_SCRIPTS } from "./harness.ts";
 
 describe("html and script structure", () => {
   test("does not inline scripts or Blazor framework URLs", () => {
@@ -26,6 +26,30 @@ describe("html and script structure", () => {
     expect(html).toMatch(/x-show="\$store\.title\.visible"/);
     expect(html).toMatch(/@click="\$store\.title\.play\(\)"/);
     expect(html).toMatch(/>Play</);
+  });
+
+  test("gates the title screen behind proof of ownership", () => {
+    expect(html).toMatch(/js\/ownership\.js/);
+    expect(html).toMatch(/x-if="!\$store\.ownership\.ready"/);
+    expect(html).toMatch(/x-if="\$store\.ownership\.ready && !\$store\.ownership\.unlocked"/);
+    expect(html).toMatch(/x-if="\$store\.ownership\.ready && \$store\.ownership\.unlocked"/);
+    expect(html).toMatch(/type="file"/);
+    expect(html).toMatch(/@change="\$store\.ownership\.submit\(\$event\)"/);
+    expect(html).toMatch(/x-text="\$store\.ownership\.error"/);
+    expect(html.indexOf('js/ownership.js')).toBeLessThan(html.indexOf('js/host.js'));
+  });
+
+  test("the host will not start a boot without an unlock", () => {
+    expect(hostJs).toMatch(/ownershipState/);
+    expect(hostJs).toMatch(/!owner \|\| !owner\.unlocked/);
+  });
+
+  test("the page asks the host rather than deciding for itself", () => {
+    expect(ownershipJs).toMatch(/ENDPOINT = 'ownership'/);
+    expect(ownershipJs).toMatch(/post\('\/challenge'\)/);
+    expect(ownershipJs).toMatch(/post\('\/answer'/);
+    // Nothing about the unlock is kept where the page could forge it.
+    expect(ownershipJs).not.toMatch(/localStorage|sessionStorage|indexedDB/);
   });
 
   test("boot jigsaw points at the puzzle image", () => {

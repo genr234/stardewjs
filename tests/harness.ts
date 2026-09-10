@@ -5,6 +5,7 @@ const wwwroot = join(import.meta.dir, "../src/web/wwwroot");
 
 export const html = await Bun.file(join(wwwroot, "index.html")).text();
 export const hostJs = await Bun.file(join(wwwroot, "js/host.js")).text();
+export const ownershipJs = await Bun.file(join(wwwroot, "js/ownership.js")).text();
 export const jigsawJs = await Bun.file(join(wwwroot, "js/boot-jigsaw.js")).text();
 export const runtimeJs = await Bun.file(join(wwwroot, "js/runtime.js")).text();
 export const workerJs = await Bun.file(join(wwwroot, "js/game.worker.js")).text();
@@ -31,6 +32,8 @@ export const RUNTIME_SCRIPTS = [
 
 export type HostOptions = {
   fallback?: boolean;
+  /** Whether the host already counts this page as verified. */
+  owned?: boolean;
   search?: string;
   /** Backs a navigator.getGamepads(); mutate it to plug pads in and out. */
   gamepads?: any[];
@@ -53,6 +56,8 @@ export type HostRun = {
 
 export function runHost(options: HostOptions = {}): HostRun {
   const fallback = options.fallback === true;
+  const owned = options.owned !== false;
+
   const elements = new Map<string, any>();
   const scheduled: Array<() => void> = [];
   const events: string[] = [];
@@ -158,18 +163,32 @@ export function runHost(options: HostOptions = {}): HostRun {
       Object,
       fetch(url: string) {
         fetches.push(url);
+        if (String(url).startsWith("ownership")) {
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ verified: owned }) });
+        }
         return Promise.resolve({ json: () => Promise.resolve({ resources: {} }) });
       },
       requestAnimationFrame: (callback: () => void) => scheduled.push(callback),
       setTimeout: (callback: () => void) => scheduled.push(callback),
       XMLHttpRequest,
       HTMLCanvasElement,
+      TextDecoder,
+      TextEncoder,
+      crypto,
       Worker: fallback ? undefined : Worker,
       navigator: options.gamepads
         ? { getGamepads: () => options.gamepads }
         : undefined,
     }),
   );
+  // Loaded ahead of the host on the page too: startGame() reads the unlock.
+  vm.runInContext(ownershipJs, context);
+  // The real unlock arrives from the host a microtask later; a test that runs
+  // synchronously stands in for the page whose cookie the host still honours.
+  if (owned) {
+    context.ownership.unlocked = true;
+    context.ownership.ready = true;
+  }
   vm.runInContext(hostJs, context);
   return {
     window: window as HostRun["window"],

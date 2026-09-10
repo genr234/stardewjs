@@ -31,7 +31,8 @@ describe("main-thread fallback", () => {
       }
       script.onload();
     }
-    await waitUntil(() => started && fallback.fetches[0] === "_framework/blazor.boot.json");
+    // The page asks the host about ownership first; the boot follows it.
+    await waitUntil(() => started && fallback.fetches.includes("_framework/blazor.boot.json"));
     expect(fallback.appended).toHaveLength(fallbackScripts.length);
   });
 });

@@ -83,6 +83,46 @@
       font-size: 12px;
     }
 
+    .title-detail code {
+      color: #cfc6a8;
+      font: inherit;
+    }
+
+    /* The input sits inside its label so it keeps focus and keyboard activation. */
+    .title-file {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+
+    .title-play:focus-within {
+      background: #e6c35c;
+      color: #1b1a17;
+    }
+
+    .title-play.is-busy {
+      cursor: progress;
+    }
+
+    .title-error {
+      margin: 12px 0 0;
+      color: #d98b6a;
+      font-size: 12px;
+    }
+
+    .title-forget {
+      margin: 16px 0 0;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: #8a8370;
+      font: inherit;
+      font-size: 12px;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
     #boot {
       position: fixed;
       inset: 0;
@@ -223,8 +263,30 @@
   <div id="title" x-data x-show="$store.title.visible">
     <div class="title-panel">
       <h1 class="title-name">Stardew Valley</h1>
-      <button class="title-play" type="button" @click="$store.title.play()">Play</button>
-      <p class="title-detail">runs in this tab; saves stay in this browser</p>
+      <template x-if="!$store.ownership.ready">
+        <p class="title-detail">checking with the host</p>
+      </template>
+      <template x-if="$store.ownership.ready && !$store.ownership.unlocked">
+        <div>
+          <label class="title-play" :class="$store.ownership.checking ? 'is-busy' : null">
+            <span x-text="$store.ownership.checking ? 'checking your copy' : 'Choose Stardew Valley.dll'">Choose Stardew Valley.dll</span>
+            <input class="title-file" type="file" :disabled="$store.ownership.checking"
+              @change="$store.ownership.submit($event)" />
+          </label>
+          <p class="title-detail">this build plays only from your own copy of the game &mdash; point it at
+            <code>Stardew Valley.dll</code> in the folder Steam or GOG installed. The host checks a few
+            kilobytes of it against its own copy; the file itself is never uploaded.</p>
+          <p class="title-error" role="alert" x-show="$store.ownership.error" x-text="$store.ownership.error"></p>
+        </div>
+      </template>
+      <template x-if="$store.ownership.ready && $store.ownership.unlocked">
+        <div>
+          <button class="title-play" type="button" @click="$store.title.play()">Play</button>
+          <p class="title-detail"><span x-text="$store.ownership.detail"></span> &mdash; runs in this tab;
+            saves stay in this browser</p>
+          <button class="title-forget" type="button" @click="$store.ownership.forget()">forget my copy</button>
+        </div>
+      </template>
     </div>
   </div>
   <div id="boot" x-data x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
@@ -261,6 +323,7 @@
   </div>
 
   <script src="js/audio-output.js"></script>
+  <script src="js/ownership.js"></script>
   <script src="js/host.js"></script>
   <script src="js/boot-jigsaw.js"></script>
 </body>

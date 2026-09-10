@@ -71,6 +71,11 @@ console.error = function () {
   window.startGame = function () {
     var state = window.titleState();
     if (!state.visible) return;
+    // js/ownership.js unlocks this once the player has produced their own copy
+    // of the game assembly. A missing script means no unlock, so a failure to
+    // load it closes the gate rather than opening it.
+    var owner = typeof window.ownershipState === 'function' ? window.ownershipState() : null;
+    if (!owner || !owner.unlocked) return;
     state.visible = false;
     var overlay = document.getElementById('title');
     if (overlay && overlay.remove) overlay.remove();
