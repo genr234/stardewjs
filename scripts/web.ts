@@ -7,7 +7,7 @@ const wwwroot = join(repoRoot, "src/web/wwwroot");
 const contentLink = join(wwwroot, "Content");
 const vendorContent = join(repoRoot, "vendor/game/Content");
 // The browser plays the wave banks as Opus; extract them with
-// tools/audio/extract_wavebank.py before expecting sound.
+// tools/audio/extract_wavebank.ts before expecting sound.
 const audioLink = join(wwwroot, "Audio");
 const extractedAudio = join(repoRoot, "build/web-content/audio");
 

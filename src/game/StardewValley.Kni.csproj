@@ -6,7 +6,7 @@
 
     Native arm64. The vendored xTile / GameData / BmFont / Lidgren / Steamworks
     assemblies ship marked x86-64, which CoreCLR refuses to load on arm64 - but
-    they are all ILONLY, so scripts/make_anycpu.py rewrites the PE machine field
+    they are all ILONLY, so scripts/make_anycpu.ts rewrites the PE machine field
     and the marking goes away. KNI's own macOS natives are universal.
   -->
   <PropertyGroup>
@@ -51,7 +51,7 @@
 
   <!-- The AnyCPU copies are generated, not vendored, so make the build produce them. -->
   <Target Name="MakeAnyCpuLibs" BeforeTargets="ResolveAssemblyReferences">
-    <Exec Command="python3 &quot;$(MSBuildThisFileDirectory)../../scripts/make_anycpu.py&quot;"
+    <Exec Command="bun &quot;$(MSBuildThisFileDirectory)../../scripts/make_anycpu.ts&quot;"
           StandardOutputImportance="low" />
   </Target>
 
