@@ -1,7 +1,11 @@
 import { existsSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 
+import { parseRelayRequest, RelayHub, type RelaySocket } from "./relay.ts";
+
 export const DEFAULT_PORT = 5199;
+
+export const RELAY_PATH = "/relay";
 
 export const ISOLATION_HEADERS = {
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -16,6 +20,7 @@ export type HostRoots = {
 export type HostOptions = HostRoots & {
   port?: number;
   hostname?: string;
+  hub?: RelayHub;
 };
 
 const LARGE_PATH = /(?:^|\/)(?:Content|Audio|_framework|_content)(?:\/|$)/i;
@@ -103,17 +108,49 @@ export async function handleRequest(
   return new Response(file, { headers });
 }
 
+type RelaySocketData = {
+  role: "host" | "client";
+  room: string | null;
+};
+
 export function startHost(options: HostOptions) {
   const roots: HostRoots = {
     wwwroot: resolve(options.wwwroot),
     frameworkRoot: resolve(options.frameworkRoot),
   };
-  return Bun.serve({
+  const hub = options.hub ?? new RelayHub({ log: (message) => console.log(`[relay] ${message}`) });
+  return Bun.serve<RelaySocketData>({
     port: options.port ?? DEFAULT_PORT,
     hostname: options.hostname ?? "127.0.0.1",
     idleTimeout: 255,
-    fetch(req, server) {
+    fetch(req, server): Response | Promise<Response> | undefined {
+      const url = new URL(req.url);
+      if (url.pathname === RELAY_PATH) {
+        const request = parseRelayRequest(url);
+        if (!request) {
+          return new Response("Bad Request", { status: 400, headers: ISOLATION_HEADERS });
+        }
+        // The socket doesn't exist until open(), so the room rides the upgrade.
+        if (server.upgrade(req, { data: request })) return undefined;
+        return new Response("Expected a WebSocket upgrade", {
+          status: 426,
+          headers: ISOLATION_HEADERS,
+        });
+      }
       return handleRequest(req, roots, server);
+    },
+    websocket: {
+      // A joining farmhand gets the whole world state in one message.
+      maxPayloadLength: 64 * 1024 * 1024,
+      open(ws) {
+        hub.open(ws, ws.data.role, ws.data.room);
+      },
+      message(ws, message) {
+        hub.message(ws, message);
+      },
+      close(ws) {
+        hub.close(ws);
+      },
     },
   });
 }
