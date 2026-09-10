@@ -23,6 +23,20 @@ describe("worker host", () => {
     expect(runtime.workers).toHaveLength(1);
   });
 
+  test("a title screen holds the boot until Play starts it", () => {
+    const runtime = runHost();
+    runtime.elements.set("title", { id: "title" });
+    runtime.readyListeners[0]?.();
+    expect(runtime.workers).toHaveLength(0);
+    expect(runtime.window.titleState().visible).toBe(true);
+    runtime.window.startGame();
+    expect(runtime.window.titleState().visible).toBe(false);
+    expect(runtime.workers).toHaveLength(1);
+    // A second click cannot start a second worker.
+    runtime.window.startGame();
+    expect(runtime.workers).toHaveLength(1);
+  });
+
   test("worker messages update boot state, errors, and input forwarding", () => {
     const runtime = runHost();
     runtime.readyListeners[0]?.();

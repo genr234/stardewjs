@@ -21,6 +21,13 @@ describe("html and script structure", () => {
     expect(html).toMatch(/pointer-events:\s*none/);
   });
 
+  test("shows a title screen with a play button", () => {
+    expect(html).toMatch(/id="title"/);
+    expect(html).toMatch(/x-show="\$store\.title\.visible"/);
+    expect(html).toMatch(/@click="\$store\.title\.play\(\)"/);
+    expect(html).toMatch(/>Play</);
+  });
+
   test("boot jigsaw points at the puzzle image", () => {
     expect(jigsawJs).toMatch(/boot-jigsaw\/puzzle\.png/);
   });

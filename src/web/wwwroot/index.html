@@ -31,6 +31,58 @@
       cursor: none;
     }
 
+    #title {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      color: #cfc6a8;
+      background: #1b1a17;
+      font: 14px ui-monospace, Menlo, monospace;
+      text-align: center;
+    }
+
+    .title-panel {
+      width: min(28rem, calc(100vw - 3rem));
+    }
+
+    .title-name {
+      margin: 0 0 20px;
+      font: inherit;
+      font-size: 20px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #e6c35c;
+    }
+
+    .title-play {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      border: 2px solid #cfc6a8;
+      background: #0e0d0b;
+      color: #cfc6a8;
+      font: inherit;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .title-play:hover,
+    .title-play:focus-visible {
+      background: #e6c35c;
+      color: #1b1a17;
+      outline: none;
+    }
+
+    .title-detail {
+      margin: 12px 0 0;
+      color: #8a8370;
+      font-size: 12px;
+    }
+
     #boot {
       position: fixed;
       inset: 0;
@@ -168,6 +220,13 @@
 
 <body>
   <canvas id="theCanvas" width="1280" height="720"></canvas>
+  <div id="title" x-data x-show="$store.title.visible">
+    <div class="title-panel">
+      <h1 class="title-name">Stardew Valley</h1>
+      <button class="title-play" type="button" @click="$store.title.play()">Play</button>
+      <p class="title-detail">runs in this tab; saves stay in this browser</p>
+    </div>
+  </div>
   <div id="boot" x-data x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
     <div class="boot-panel" x-show="!$store.boot.failed">
       <p class="boot-status" id="boot-status" x-text="$store.boot.status">loading the .NET runtime</p>

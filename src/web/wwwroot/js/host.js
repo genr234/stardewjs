@@ -48,6 +48,36 @@ console.error = function () {
   return nativeConsoleError.apply(null, arguments);
 };
 
+// Nothing downloads until Play; the click is also the gesture audio needs.
+(function () {
+  var title = { visible: true };
+
+  window.titleState = function () {
+    if (window.Alpine) {
+      var stored = Alpine.store('title');
+      if (stored) return stored;
+    }
+    return title;
+  };
+
+  document.addEventListener('alpine:init', function () {
+    Alpine.store('title', title);
+  });
+
+  title.play = function () {
+    window.startGame();
+  };
+
+  window.startGame = function () {
+    var state = window.titleState();
+    if (!state.visible) return;
+    state.visible = false;
+    var overlay = document.getElementById('title');
+    if (overlay && overlay.remove) overlay.remove();
+    if (typeof window.loadRuntime === 'function') window.loadRuntime();
+  };
+})();
+
 // Combined bar: runtime downloads occupy the first half, game asset XHRs the second.
 // Alpine.store('boot') owns the overlay; this script only mutates that state.
 (function () {
@@ -932,6 +962,8 @@ window.startGameLoop = function (dotnetRef) {
 };
 
 function tryLoadRuntime() {
+  // With a title screen on the page the Play button starts the load instead.
+  if (document.getElementById('title')) return;
   if (typeof window.loadRuntime === 'function') window.loadRuntime();
 }
 if (document.readyState === 'loading') {
