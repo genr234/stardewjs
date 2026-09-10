@@ -329,6 +329,99 @@ function startRuntime(data) {
   self.startBlazor();
 }
 
+// A worker has no getGamepads, so this answers KNI's poll from the page's latest
+// snapshot. Pads are updated in place: KNI registers each object it sees, and it
+// polls four times a frame.
+var gamepadSlots = [];
+var gamepadList = [null, null, null, null];
+
+function gamepadSlot(index) {
+  var pad = gamepadSlots[index];
+  if (!pad) {
+    pad = gamepadSlots[index] = {
+      index: index,
+      id: '',
+      mapping: '',
+      connected: false,
+      timestamp: 0,
+      axes: [],
+      buttons: [],
+    };
+  }
+  return pad;
+}
+
+function attachVibration(pad, snapshot) {
+  if (pad.vibrationActuator) return;
+  if (!snapshot.hasPulse && !snapshot.hasPlayEffect) return;
+  var actuator = {};
+  if (snapshot.hasPulse) {
+    actuator.pulse = function (value, duration) {
+      post({ type: 'gamepad-vibrate', index: pad.index, effect: 'pulse', value: value, duration: duration });
+      return true;
+    };
+  }
+  if (snapshot.hasPlayEffect) {
+    actuator.playEffect = function (effectType, params) {
+      post({ type: 'gamepad-vibrate', index: pad.index, effect: 'playEffect', effectType: effectType, params: params });
+      return true;
+    };
+  }
+  pad.vibrationActuator = actuator;
+}
+
+function applyGamepadSnapshot(snapshot) {
+  var pad = gamepadSlot(snapshot.index);
+  pad.id = snapshot.id || '';
+  pad.mapping = snapshot.mapping || '';
+  pad.connected = snapshot.connected !== false;
+  pad.timestamp = snapshot.timestamp || 0;
+  pad.axes = snapshot.axes || [];
+  var values = snapshot.values || [];
+  pad.buttons.length = values.length;
+  for (var i = 0; i < values.length; i++) {
+    var button = pad.buttons[i] || (pad.buttons[i] = { value: 0, pressed: false, touched: false });
+    button.value = values[i];
+    button.pressed = !!(snapshot.pressed && snapshot.pressed[i]);
+    button.touched = !!(snapshot.touched && snapshot.touched[i]);
+    pad.buttons[i] = button;
+  }
+  attachVibration(pad, snapshot);
+  return pad;
+}
+
+function updateGamepads(pads) {
+  var snapshots = pads || [];
+  var length = 4;
+  for (var i = 0; i < snapshots.length; i++) {
+    if (snapshots[i].index + 1 > length) length = snapshots[i].index + 1;
+  }
+  // Absent slots must be null, not undefined, and the array is reused for the
+  // same registration reason as the pads.
+  gamepadList.length = length;
+  for (var j = 0; j < length; j++) gamepadList[j] = null;
+  for (var k = 0; k < snapshots.length; k++) {
+    var pad = applyGamepadSnapshot(snapshots[k]);
+    gamepadList[pad.index] = pad;
+  }
+}
+
+function installGamepads() {
+  if (!self.navigator) self.navigator = {};
+  function getGamepads() {
+    return gamepadList;
+  }
+  try {
+    self.navigator.getGamepads = getGamepads;
+    if (typeof self.navigator.getGamepads === 'function') return;
+  } catch (err) {}
+  var navigator = Object.create(self.navigator);
+  navigator.getGamepads = getGamepads;
+  Object.defineProperty(self, 'navigator', { value: navigator, configurable: true });
+}
+
+installGamepads();
+
 function dispatchForwardedEvent(data) {
   applyMetrics(data);
   var event = {
@@ -399,6 +492,10 @@ self.onmessage = function (e) {
   }
   if (data.type === 'event') {
     dispatchForwardedEvent(data);
+    return;
+  }
+  if (data.type === 'gamepads') {
+    updateGamepads(data.pads);
     return;
   }
   if (data.type === 'audio-ended') {

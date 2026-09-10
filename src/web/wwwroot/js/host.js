@@ -245,6 +245,9 @@ console.error = function () {
       case 'audio':
         if (window.browserAudioOutput) window.browserAudioOutput.apply(data.command);
         break;
+      case 'gamepad-vibrate':
+        vibrateGamepad(data);
+        break;
       case 'profiler':
         if (window.__profiler && typeof window.__profiler.update === 'function') {
           window.__profiler.update(data);
@@ -465,11 +468,98 @@ console.error = function () {
       postEvent('touchend', event);
     }, { passive: false });
     window.addEventListener('touchcancel', function (event) { postEvent('touchcancel', event); });
-    window.addEventListener('gamepadconnected', function (event) { postEvent('gamepadconnected', event); });
-    window.addEventListener('gamepaddisconnected', function (event) { postEvent('gamepaddisconnected', event); });
     document.addEventListener('visibilitychange', function () {
       worker.postMessage({ type: 'visibility', hidden: document.hidden });
     });
+    forwardGamepads(worker, postEvent);
+  }
+
+  // A worker has no getGamepads, so the page polls and ships snapshots. Connects
+  // come from the poll too: KNI only registers pads on 'gamepadconnected', and
+  // its startup scan is broken, so a pad connected before load would be missed.
+  function forwardGamepads(worker, postEvent) {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+    var announced = {};
+    var posted = false;
+
+    function snapshot(pad) {
+      var buttons = pad.buttons || [];
+      var values = [];
+      var pressed = [];
+      var touched = [];
+      for (var i = 0; i < buttons.length; i++) {
+        var button = buttons[i];
+        var isObject = button && typeof button === 'object';
+        values.push(isObject ? button.value : button || 0);
+        pressed.push(isObject ? (button.pressed ? 1 : 0) : (button ? 1 : 0));
+        touched.push(isObject && button.touched ? 1 : 0);
+      }
+      var actuator = pad.vibrationActuator;
+      return {
+        index: pad.index,
+        id: pad.id,
+        mapping: pad.mapping,
+        connected: !!pad.connected,
+        timestamp: pad.timestamp,
+        axes: Array.prototype.slice.call(pad.axes || []),
+        values: values,
+        pressed: pressed,
+        touched: touched,
+        // KNI uses whichever of playEffect/pulse exists, so mirror this pad's.
+        hasPulse: !!(actuator && typeof actuator.pulse === 'function'),
+        hasPlayEffect: !!(actuator && typeof actuator.playEffect === 'function'),
+      };
+    }
+
+    function poll() {
+      var pads = navigator.getGamepads() || [];
+      var snapshots = [];
+      var live = {};
+      for (var i = 0; i < pads.length; i++) {
+        var pad = pads[i];
+        if (!pad || !pad.connected) continue;
+        live[pad.index] = true;
+        snapshots.push(snapshot(pad));
+      }
+      // Snapshot before connect: KNI reads the pad back immediately and doesn't
+      // null-check it.
+      if (snapshots.length || posted) {
+        worker.postMessage({ type: 'gamepads', pads: snapshots });
+        posted = snapshots.length > 0;
+      }
+      for (var j = 0; j < snapshots.length; j++) {
+        var index = snapshots[j].index;
+        if (announced[index]) continue;
+        announced[index] = true;
+        postEvent('gamepadconnected', null, { gamepadIndex: index });
+      }
+      Object.keys(announced).forEach(function (key) {
+        if (live[key]) return;
+        delete announced[key];
+        postEvent('gamepaddisconnected', null, { gamepadIndex: Number(key) });
+      });
+      requestAnimationFrame(poll);
+    }
+
+    requestAnimationFrame(poll);
+  }
+
+  function vibrateGamepad(data) {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+    var pads = navigator.getGamepads() || [];
+    var pad = null;
+    for (var i = 0; i < pads.length; i++) {
+      if (pads[i] && pads[i].index === data.index) pad = pads[i];
+    }
+    var actuator = pad && pad.vibrationActuator;
+    if (!actuator) return;
+    try {
+      if (data.effect === 'pulse' && typeof actuator.pulse === 'function') {
+        actuator.pulse(data.value, data.duration);
+      } else if (typeof actuator.playEffect === 'function') {
+        actuator.playEffect(data.effectType || 'dual-rumble', data.params || {});
+      }
+    } catch (ignored) {}
   }
 
   function canUseWorker(canvas) {
@@ -491,8 +581,41 @@ console.error = function () {
     });
   }
 
+  // KNI only registers a pad on 'gamepadconnected', which may fire before it
+  // listens, so re-announce what the poll sees.
+  function announceGamepads() {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+    var announced = {};
+    function dispatch(name, pad) {
+      var event = new Event(name);
+      event.gamepad = pad;
+      window.dispatchEvent(event);
+    }
+    function poll() {
+      var pads = navigator.getGamepads() || [];
+      var live = {};
+      for (var i = 0; i < pads.length; i++) {
+        var pad = pads[i];
+        if (!pad || !pad.connected) continue;
+        live[pad.index] = true;
+        if (announced[pad.index]) continue;
+        announced[pad.index] = pad;
+        dispatch('gamepadconnected', pad);
+      }
+      Object.keys(announced).forEach(function (key) {
+        if (live[key]) return;
+        var gone = announced[key];
+        delete announced[key];
+        dispatch('gamepaddisconnected', gone);
+      });
+      requestAnimationFrame(poll);
+    }
+    requestAnimationFrame(poll);
+  }
+
   function loadMainThreadRuntime() {
     bindPointerLock(document.getElementById('theCanvas'), { rewriteWindowEvents: true });
+    announceGamepads();
     return loadScript('js/runtime.js').then(function () {
       return window.loadRuntimeScripts();
     }).then(function () {

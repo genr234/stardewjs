@@ -33,6 +33,9 @@ public static class WebProgram
 		System.Threading.Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
 		Program.GameTesterMode = true;
 
+		// Gamepad mode snaps the cursor around, which the browser backend cannot do.
+		BrowserMouse.Initialize(_js);
+
 		try
 		{
 			Stage("restoring-saves");

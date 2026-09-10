@@ -12,6 +12,7 @@ export const workerJs = await Bun.file(join(wwwroot, "js/game.worker.js")).text(
 export const RUNTIME_SCRIPTS = [
   "js/save-storage.js",
   "js/audio.js",
+  "js/input.js",
   "_content/nkast.Wasm.JSInterop/js/JSObject.10.0.3.js",
   "_content/nkast.Wasm.Dom/js/Window.10.0.3.js",
   "_content/nkast.Wasm.Dom/js/Document.10.0.3.js",
@@ -30,6 +31,8 @@ export const RUNTIME_SCRIPTS = [
 export type HostOptions = {
   fallback?: boolean;
   search?: string;
+  /** Backs a navigator.getGamepads(); mutate it to plug pads in and out. */
+  gamepads?: any[];
 };
 
 export type HostRun = {
@@ -161,6 +164,9 @@ export function runHost(options: HostOptions = {}): HostRun {
       XMLHttpRequest,
       HTMLCanvasElement,
       Worker: fallback ? undefined : Worker,
+      navigator: options.gamepads
+        ? { getGamepads: () => options.gamepads }
+        : undefined,
     }),
   );
   vm.runInContext(hostJs, context);
