@@ -611,8 +611,8 @@
         <div class="theme-grid">
           <template x-for="theme in $store.themes.list" :key="theme.id">
             <button class="theme-swatch" type="button"
-              :class="$store.settings.get('ui.theme') === theme.id ? 'is-chosen' : null"
-              :aria-pressed="$store.settings.get('ui.theme') === theme.id"
+              :class="$store.themes.chosen === theme.id ? 'is-chosen' : null"
+              :aria-pressed="$store.themes.chosen === theme.id"
               @click="$store.settings.set('ui.theme', theme.id)">
               <span class="theme-preview" :style="$store.themes.preview(theme.id)">
                 <span class="theme-chip" :style="{ background: theme.palette.accent }"></span>

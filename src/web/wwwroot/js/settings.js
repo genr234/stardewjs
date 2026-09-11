@@ -6,8 +6,8 @@ const EVENT = 'settings-change';
 
 // Every setting the menu can change, with its default.
 const DEFAULTS = {
-  // Which palette and wallpaper the page's own screens wear. The themes
-  // themselves live in js/theme.js, which is also what applies this.
+  // js/theme.js picks a random theme until one is chosen, so it reads this
+  // with a fallback of its own.
   'ui.theme': 'stardew',
   // Levels the page applies on top of the game's own sliders, 0 to 1.
   'audio.master': 1,

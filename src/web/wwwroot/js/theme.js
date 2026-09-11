@@ -101,12 +101,14 @@ function theme(id) {
   return BY_ID.get(id) || BY_ID.get(DEFAULT_ID);
 }
 
-// What the menu holds, sanitised: a theme removed from this file must not leave
-// the page with no colours at all.
+// Until the player picks a theme, each visit rolls a random one. The null
+// fallback distinguishes "never picked" from the documented default.
 function chosenId() {
   const settings = settingsState();
-  const stored = settings && typeof settings.get === 'function' ? settings.get(SETTING) : null;
-  return BY_ID.has(stored) ? stored : DEFAULT_ID;
+  const stored = settings && typeof settings.get === 'function' ? settings.get(SETTING, null) : null;
+  if (BY_ID.has(stored)) return stored;
+  // A stored theme this build no longer ships falls back to the default.
+  return stored === null ? THEMES[Math.floor(Math.random() * THEMES.length)].id : DEFAULT_ID;
 }
 
 // Separate properties because tiles and scenes need different background rules.
@@ -128,6 +130,8 @@ function backdrop(chosen, scale) {
 
 function apply(id) {
   const chosen = theme(id);
+  // Through the Alpine store so the menu redraws.
+  state().chosen = chosen.id;
   const root = typeof document !== 'undefined' ? document.documentElement : null;
   if (!root || !root.style || typeof root.style.setProperty !== 'function') return chosen;
   for (const [name, value] of Object.entries(chosen.palette)) {
@@ -160,10 +164,20 @@ function preview(id) {
 
 const themes = {
   list: THEMES,
+  // The theme actually shown, which may be this visit's roll rather than a stored choice.
+  chosen: DEFAULT_ID,
   preview: preview,
   apply: apply,
   current: function () { return theme(chosenId()); },
 };
+
+function state() {
+  if (typeof window !== 'undefined' && window.Alpine) {
+    const stored = window.Alpine.store('themes');
+    if (stored) return stored;
+  }
+  return themes;
+}
 
 apply(chosenId());
 
@@ -171,7 +185,8 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
   window.addEventListener('settings-change', function (event) {
     const detail = event && event.detail;
     if (!detail || detail.name !== SETTING) return;
-    apply(BY_ID.has(detail.value) ? detail.value : DEFAULT_ID);
+    // Re-read rather than trust the event: a reset should re-roll.
+    apply(chosenId());
   });
 }
 
