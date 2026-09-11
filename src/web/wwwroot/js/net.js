@@ -5,10 +5,21 @@
   var RELAY_PATH = '/relay';
 
   function relayUrl(role, room) {
-    // self.location in a worker is the worker script's URL, so the origin is the
-    // host that served the game - which is the host that carries the relay.
-    var origin = (root.location && root.location.origin) || '';
-    var url = origin.replace(/^http/, 'ws') + RELAY_PATH + '?role=' + role;
+    // In a worker, location is the script's URL, so its origin is the relay's
+    // host. The settings menu can name another relay.
+    var base = typeof root.__relayUrl === 'string' ? root.__relayUrl.trim() : '';
+    var url;
+    if (base) {
+      // Accept a bare host, http:// or ws://.
+      url = base.replace(/^http/, 'ws');
+      if (!/^wss?:\/\//i.test(url)) url = 'ws://' + url;
+      url = url.replace(/\/+$/, '');
+      if (!new RegExp(RELAY_PATH + '$').test(url)) url += RELAY_PATH;
+    } else {
+      var origin = (root.location && root.location.origin) || '';
+      url = origin.replace(/^http/, 'ws') + RELAY_PATH;
+    }
+    url += '?role=' + role;
     if (room) url += '&room=' + encodeURIComponent(room);
     return url;
   }

@@ -6,6 +6,40 @@
   var context = null;
   var buffers = new Map();
   var voices = new Map();
+  // The player's own levels, from the settings menu, on top of whatever the
+  // game's sliders already folded into each cue. Music and effects hang off
+  // master so one knob moves everything.
+  var master = null;
+  var music = null;
+  var effects = null;
+
+  function settingsValue(name) {
+    var settings = typeof root.settingsState === 'function' ? root.settingsState() : null;
+    if (!settings || typeof settings.get !== 'function') return 1;
+    var value = Number(settings.get(name));
+    return isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+  }
+
+  // Built with the context, because a GainNode cannot outlive one. The levels
+  // are read here rather than kept in sync from the page: the menu can be used
+  // before a single cue has played, and this runs after any of that.
+  function buildBuses() {
+    master = context.createGain();
+    master.gain.value = settingsValue('audio.master');
+    master.connect(context.destination);
+    music = context.createGain();
+    music.gain.value = settingsValue('audio.music');
+    music.connect(master);
+    effects = context.createGain();
+    effects.gain.value = settingsValue('audio.effects');
+    effects.connect(master);
+  }
+
+  // Everything the game does not call music is an effect: footsteps, ambience
+  // and the unnamed default category alike.
+  function busFor(category) {
+    return category === 'Music' ? music : effects;
+  }
 
   // A cue asked for before the first gesture would be dropped by the browser's
   // autoplay policy, so hold the context until one arrives and let the queued
@@ -15,6 +49,7 @@
       var Ctor = root.AudioContext || root.webkitAudioContext;
       if (!Ctor) return null;
       context = new Ctor();
+      buildBuses();
     }
     if (context.state === 'suspended') context.resume();
     return context;
@@ -102,10 +137,11 @@
         } else {
           source.connect(gain);
         }
-        // The category slider is already folded into command.volume, so there is
-        // no bus here: XACT clamps the product, and a bus would clamp only the
-        // half of it that came before.
-        gain.connect(context.destination);
+        // The game's own category slider is already folded into command.volume:
+        // XACT clamps that product, and a bus would clamp only the half of it
+        // that came before. What hangs below is the player's menu level, which
+        // only ever attenuates what the game asked for.
+        gain.connect(busFor(command.category));
         source.onended = function () {
           if (voices.get(handle) === current) {
             voices.delete(handle);
@@ -198,14 +234,37 @@
       ensureContext();
     },
 
+    /// Re-reads the menu's levels. Called when a slider moves; a context that
+    /// does not exist yet will read them for itself when it is built.
+    applyLevels: function () {
+      if (!context) return;
+      master.gain.value = settingsValue('audio.master');
+      music.gain.value = settingsValue('audio.music');
+      effects.gain.value = settingsValue('audio.effects');
+    },
+
     /// Test seam: the live voice count, and the decoded buffer cache size.
     stats: function () {
-      return { voices: voices.size, buffers: buffers.size, state: context ? context.state : 'none' };
+      return {
+        voices: voices.size,
+        buffers: buffers.size,
+        state: context ? context.state : 'none',
+        levels: context
+          ? { master: master.gain.value, music: music.gain.value, effects: effects.gain.value }
+          : null,
+      };
     },
   };
 
   if (root.addEventListener) {
     root.addEventListener('pointerdown', root.browserAudioOutput.unlock, { once: false });
     root.addEventListener('keydown', root.browserAudioOutput.unlock, { once: false });
+    // A slider the player is dragging should be audible as they drag it.
+    root.addEventListener('settings-change', function (event) {
+      var name = event && event.detail && event.detail.name;
+      if (typeof name === 'string' && name.indexOf('audio.') === 0) {
+        root.browserAudioOutput.applyLevels();
+      }
+    });
   }
 })(globalThis);

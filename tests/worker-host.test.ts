@@ -130,6 +130,44 @@ describe("worker host", () => {
     expect(profiled.window.__profiler.last.fps).toBe(12);
   });
 
+  test("a stored setting turns the profiler on without the query string", () => {
+    const off = runHost();
+    expect(off.window.__profiler.enabled).toBe(false);
+    off.readyListeners[0]?.();
+    expect(off.workers[0].posted[0].data.profiler).toBe(false);
+
+    const on = runHost({ settings: { profiler: true } });
+    expect(on.window.__profiler.enabled).toBe(true);
+    on.readyListeners[0]?.();
+    expect(on.workers[0].posted[0].data.profiler).toBe(true);
+  });
+
+  test("toggling the setting turns the overlay on and off while the game runs", () => {
+    const runtime = runHost();
+    runtime.readyListeners[0]?.();
+    const worker = runtime.workers[0];
+    expect(runtime.profiler.hidden).toBe(true);
+
+    runtime.window.settingsState().set("profiler", true);
+    expect(runtime.window.__profiler.enabled).toBe(true);
+    expect(runtime.profiler.hidden).toBe(false);
+    expect(worker.posted[worker.posted.length - 1].data).toEqual({ type: "profiler-enable", enabled: true });
+    expect(JSON.parse(runtime.stored.get("stardew.settings")!)).toEqual({ profiler: true });
+
+    runtime.window.settingsState().set("profiler", false);
+    expect(runtime.window.__profiler.enabled).toBe(false);
+    expect(runtime.profiler.hidden).toBe(true);
+    // The inline display the overlay is drawn with outranks [hidden].
+    expect(runtime.profiler.style.display).toBe("none");
+    expect(worker.posted[worker.posted.length - 1].data).toEqual({ type: "profiler-enable", enabled: false });
+  });
+
+  test("?profiler wins for one load without rewriting the setting", () => {
+    const runtime = runHost({ search: "?profiler", settings: { profiler: false } });
+    expect(runtime.window.__profiler.enabled).toBe(true);
+    expect(runtime.window.settingsState().get("profiler")).toBe(false);
+  });
+
   test("the worker shims a document and boots Blazor on the offscreen canvas", async () => {
     const worker = runWorker();
     expect(typeof worker.context.window.dispatchEvent).toBe("function");
@@ -202,6 +240,15 @@ describe("worker host", () => {
     expect(queried.type).toBe("profiler");
     expect(queried.frames).toBe(44);
     expect(queried.gcBytes).toBe(2 * 1048576);
+
+    worker.context.onmessage({ data: { type: "profiler-enable", enabled: true } });
+    expect(worker.context.__profilerEnabled).toBe(true);
+    worker.context.onmessage({ data: { type: "profiler-enable", enabled: false } });
+    expect(worker.context.__profilerEnabled).toBe(false);
+
+    worker.context.onmessage({ data: { type: "pacing", fps: 30, pauseWhenHidden: true } });
+    expect(worker.context.__frameCap).toBe(30);
+    expect(worker.context.__pauseWhenHidden).toBe(true);
   });
 
   test("a timed worker posts profiler samples after the interval", () => {

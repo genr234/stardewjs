@@ -311,10 +311,18 @@ function installPageUrls() {
   };
 }
 
+function applyPacing(pacing) {
+  if (!pacing) return;
+  self.__frameCap = Number(pacing.fps) || 0;
+  self.__pauseWhenHidden = !!pacing.pauseWhenHidden;
+}
+
 function startRuntime(data) {
   applyMetrics(data);
   attachCanvas(data.canvas, data);
   self.__profilerEnabled = !!data.profiler;
+  applyPacing(data.pacing);
+  self.__relayUrl = typeof data.relay === 'string' ? data.relay : '';
   if (data.debug && typeof OffscreenCanvas !== 'undefined') {
     self.installDebugContext(OffscreenCanvas);
   }
@@ -508,5 +516,13 @@ self.onmessage = function (e) {
   }
   if (data.type === 'profiler-query') {
     postProfilerSnapshot();
+    return;
+  }
+  if (data.type === 'profiler-enable') {
+    self.__profilerEnabled = !!data.enabled;
+    return;
+  }
+  if (data.type === 'pacing') {
+    applyPacing(data);
   }
 };

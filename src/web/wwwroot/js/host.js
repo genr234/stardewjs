@@ -319,7 +319,8 @@ console.error = function () {
     return {
       innerWidth: window.innerWidth,
       innerHeight: window.innerHeight,
-      devicePixelRatio: window.devicePixelRatio || 1,
+      // Below 1 the game draws fewer pixels and the browser stretches them.
+      devicePixelRatio: (window.devicePixelRatio || 1) * settingNumber('display.renderScale', 1, 0.25, 1),
       hidden: !!(document && document.hidden),
       clientWidth: canvas && canvas.clientWidth,
       clientHeight: canvas && canvas.clientHeight,
@@ -379,6 +380,7 @@ console.error = function () {
 
     function requestLock() {
       if (!supported || isLocked()) return;
+      if (window.settingValue('input.pointerLock', true) === false) return;
       var result;
       try {
         result = canvas.requestPointerLock({ unadjustedMovement: true });
@@ -557,7 +559,7 @@ console.error = function () {
         mapping: pad.mapping,
         connected: !!pad.connected,
         timestamp: pad.timestamp,
-        axes: Array.prototype.slice.call(pad.axes || []),
+        axes: applyDeadzone(pad.axes),
         values: values,
         pressed: pressed,
         touched: touched,
@@ -565,6 +567,20 @@ console.error = function () {
         hasPulse: !!(actuator && typeof actuator.pulse === 'function'),
         hasPlayEffect: !!(actuator && typeof actuator.playEffect === 'function'),
       };
+    }
+
+    // Rescales outside the deadzone so the stick still reaches its ends.
+    // Worker path only; the main-thread fallback reads the real pads directly.
+    function applyDeadzone(axes) {
+      var list = Array.prototype.slice.call(axes || []);
+      var dead = settingNumber('input.deadzone', 0, 0, 0.9);
+      if (dead <= 0) return list;
+      for (var i = 0; i < list.length; i++) {
+        var value = Number(list[i]) || 0;
+        var size = Math.abs(value);
+        list[i] = size <= dead ? 0 : (value < 0 ? -1 : 1) * ((size - dead) / (1 - dead));
+      }
+      return list;
     }
 
     function poll() {
@@ -714,7 +730,9 @@ console.error = function () {
     boot.type = 'boot';
     boot.canvas = offscreen;
     boot.debug = new URLSearchParams(location.search).has('debug');
-    boot.profiler = new URLSearchParams(location.search).has('profiler');
+    boot.profiler = window.profilerPreference();
+    boot.pacing = window.pacingPreference();
+    boot.relay = window.relayPreference();
     boot.baseURI = document.baseURI || location.href;
     worker.postMessage(boot, [offscreen]);
     forwardInput(worker, canvas);
@@ -731,11 +749,83 @@ console.error = function () {
   };
 })();
 
-(function () {
-  var profilerOn = false;
+// What the settings menu says, or the documented default when it has never
+// been asked. js/settings.js is loaded ahead of this file on the page; a build
+// that somehow drops it still runs, on defaults supplied by the caller.
+window.settingValue = function (name, fallback) {
+  var settings = typeof window.settingsState === 'function' ? window.settingsState() : null;
+  if (!settings || typeof settings.get !== 'function') return fallback;
+  var value = settings.get(name);
+  return value === undefined ? fallback : value;
+};
+
+function settingNumber(name, fallback, min, max) {
+  var value = Number(window.settingValue(name, fallback));
+  if (!isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, value));
+}
+
+window.pacingPreference = function () {
+  return {
+    fps: settingNumber('pacing.fpsCap', 0, 0, 240),
+    pauseWhenHidden: window.settingValue('pacing.pauseWhenHidden', false) === true,
+  };
+};
+
+window.relayPreference = function () {
+  var value = window.settingValue('net.relay', '');
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+// Set on this global (the fallback) and posted to the worker.
+function applyPacing() {
+  var pacing = window.pacingPreference();
+  window.__frameCap = pacing.fps;
+  window.__pauseWhenHidden = pacing.pauseWhenHidden;
+  if (window.__gameWorker && typeof window.__gameWorker.postMessage === 'function') {
+    try {
+      window.__gameWorker.postMessage({ type: 'pacing', fps: pacing.fps, pauseWhenHidden: pacing.pauseWhenHidden });
+    } catch (err) {}
+  }
+}
+
+function applyCrispness() {
+  var canvas = document.getElementById('theCanvas');
+  if (!canvas || !canvas.style) return;
+  canvas.style.imageRendering = window.settingValue('display.crisp', true) === false ? 'auto' : 'pixelated';
+}
+
+// The game only learns about a new framebuffer size from a resize.
+function applyRenderScale() {
+  if (typeof window.dispatchEvent !== 'function') return;
   try {
-    profilerOn = new URLSearchParams(location.search).has('profiler');
+    window.dispatchEvent(new Event('resize'));
   } catch (err) {}
+}
+
+// Called from the click itself, since fullscreen needs the gesture.
+window.toggleFullscreen = function () {
+  var target = document.documentElement;
+  try {
+    if (document.fullscreenElement) {
+      if (document.exitFullscreen) document.exitFullscreen();
+    } else if (target && target.requestFullscreen) {
+      target.requestFullscreen();
+    }
+  } catch (err) {}
+};
+
+// ?profiler forces it on for this load without changing the saved setting.
+window.profilerPreference = function () {
+  try {
+    if (new URLSearchParams(location.search).has('profiler')) return true;
+  } catch (err) {}
+  var settings = typeof window.settingsState === 'function' ? window.settingsState() : null;
+  return !!(settings && typeof settings.get === 'function' && settings.get('profiler') === true);
+};
+
+(function () {
+  var profilerOn = window.profilerPreference();
 
   function round1(n) {
     return Math.round(Number(n) * 10) / 10;
@@ -970,6 +1060,15 @@ console.error = function () {
     sampleFrame();
   }
 
+  function hideOverlay() {
+    var el = document.getElementById('profiler');
+    if (!el) return;
+    el.hidden = true;
+    if (el.setAttribute) el.setAttribute('hidden', '');
+    // ensureOverlay's inline display:block outranks [hidden].
+    if (el.style) el.style.display = 'none';
+  }
+
   window.__profiler = {
     enabled: profilerOn,
     last: {},
@@ -980,6 +1079,19 @@ console.error = function () {
       if (!el) return;
       paintCharts();
     },
+    setEnabled: function (on) {
+      on = !!on;
+      if (on === this.enabled) return;
+      this.enabled = on;
+      tellWorker(on);
+      if (on) {
+        this.update({});
+        startPolling();
+      } else {
+        stopPolling();
+        hideOverlay();
+      }
+    },
   };
 
   function pollWorker() {
@@ -989,20 +1101,65 @@ console.error = function () {
     } catch (err) {}
   }
 
+  function tellWorker(on) {
+    if (!window.__gameWorker || typeof window.__gameWorker.postMessage !== 'function') return;
+    try {
+      window.__gameWorker.postMessage({ type: 'profiler-enable', enabled: on });
+    } catch (err) {}
+  }
+
+  var pollTimer = null;
+
+  function startPolling() {
+    if (pollTimer != null || typeof setInterval !== 'function') return;
+    pollTimer = setInterval(function () {
+      pollWorker();
+      window.__profiler.update();
+    }, 250);
+  }
+
+  function stopPolling() {
+    if (pollTimer == null || typeof clearInterval !== 'function') return;
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
   if (profilerOn) {
     window.__profiler.update({});
-    if (typeof setInterval === 'function') {
-      setInterval(function () {
-        pollWorker();
-        window.__profiler.update();
-      }, 250);
-    }
+    startPolling();
+  }
+
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('settings-change', function (event) {
+      var detail = event && event.detail;
+      if (!detail || detail.name !== 'profiler') return;
+      window.__profiler.setEnabled(detail.value);
+    });
   }
 })();
 
-// ?debug=1 preserves the framebuffer for readback. Keep the tab visible:
-// preserving pixels does not make a hidden page run at normal frame rates.
-// Off by default because preserveDrawingBuffer costs real performance.
+// Apply menu changes live. Audio handles its own in js/audio-output.js.
+(function () {
+  var APPLY = {
+    'pacing.fpsCap': applyPacing,
+    'pacing.pauseWhenHidden': applyPacing,
+    'display.crisp': applyCrispness,
+    'display.renderScale': applyRenderScale,
+    // net.relay is read at connect time.
+  };
+
+  applyPacing();
+  applyCrispness();
+
+  if (typeof window.addEventListener !== 'function') return;
+  window.addEventListener('settings-change', function (event) {
+    var name = event && event.detail && event.detail.name;
+    var apply = name ? APPLY[name] : null;
+    if (apply) apply();
+  });
+})();
+
+// ?debug=1 preserves the framebuffer for readback; off by default for speed.
 if (new URLSearchParams(location.search).has('debug') && typeof HTMLCanvasElement !== 'undefined') {
   var originalGetContext = HTMLCanvasElement.prototype.getContext;
   HTMLCanvasElement.prototype.getContext = function (type, attrs) {
@@ -1125,17 +1282,39 @@ window.startGameLoop = function (dotnetRef) {
     }
     schedule(frame);
   }
-  // requestAnimationFrame does not fire while the page is hidden, which stops
-  // the game entirely rather than pausing it. Fall back to a timer so a
-  // background tab keeps running (slowly, as the browser clamps it).
+  // Caps drop whole frames so the ones that run stay aligned to the display.
+  function frameBudget() {
+    var cap = Number(window.__frameCap) || 0;
+    return cap > 0 ? 1000 / cap : 0;
+  }
+
+  // rAF stops in hidden tabs, so fall back to a timer unless pauseWhenHidden is on.
   function schedule(fn) {
     if (document.hidden) {
+      if (window.__pauseWhenHidden) {
+        scheduleMode = 'paused';
+        setTimeout(function () { schedule(fn); }, 250);
+        return;
+      }
       scheduleMode = 'timeout';
       setTimeout(fn, 16);
-    } else {
+      return;
+    }
+    var budget = frameBudget();
+    if (budget <= 0) {
       scheduleMode = 'raf';
       requestAnimationFrame(fn);
+      return;
     }
+    scheduleMode = 'capped';
+    requestAnimationFrame(function () {
+      // Slack so a budget just under the display interval doesn't halve the rate.
+      if (nowMs() - last + 0.5 < budget) {
+        schedule(fn);
+        return;
+      }
+      fn();
+    });
   }
   schedule(frame);
 };

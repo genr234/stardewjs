@@ -65,11 +65,12 @@ function opened(index: number): FakeSocket {
   return socket;
 }
 
-function loadNet() {
+function loadNet(relay?: string) {
   FakeSocket.opened = [];
   const context: Record<string, any> = {
     WebSocket: FakeSocket,
     location: { origin: "http://localhost:5199" },
+    __relayUrl: relay ?? "",
     btoa: (text: string) => Buffer.from(text, "binary").toString("base64"),
     atob: (text: string) => Buffer.from(text, "base64").toString("binary"),
     console,
@@ -95,6 +96,18 @@ describe("browser transport", () => {
 
     net.clientConnect("ABC123");
     expect(opened(1).url).toBe("ws://localhost:5199/relay?role=client&room=ABC123");
+  });
+
+  test("a relay named in the settings menu replaces the origin's", () => {
+    for (const written of ["farm.example:5199", "http://farm.example:5199", "ws://farm.example:5199/relay"]) {
+      const net = loadNet(written);
+      net.hostStart(null);
+      expect(opened(0).url).toBe("ws://farm.example:5199/relay?role=host");
+    }
+
+    const secure = loadNet("https://farm.example");
+    secure.clientConnect("ABC123");
+    expect(opened(0).url).toBe("wss://farm.example/relay?role=client&room=ABC123");
   });
 
   test("reports the room code the relay assigns", () => {

@@ -338,15 +338,39 @@
       } catch (err) {}
       schedule(frame);
     }
+    // Caps drop whole frames so the ones that run stay aligned to the display.
+    function frameBudget() {
+      var cap = Number(root.__frameCap) || 0;
+      return cap > 0 ? 1000 / cap : 0;
+    }
+
     function schedule(fn) {
       var hidden = !!(root.document && root.document.hidden);
       if (hidden) {
+        if (root.__pauseWhenHidden) {
+          scheduleMode = 'paused';
+          setTimeout(function () { schedule(fn); }, 250);
+          return;
+        }
         scheduleMode = 'timeout';
         setTimeout(fn, 16);
-      } else {
+        return;
+      }
+      var budget = frameBudget();
+      if (budget <= 0) {
         scheduleMode = 'raf';
         requestAnimationFrame(fn);
+        return;
       }
+      scheduleMode = 'capped';
+      requestAnimationFrame(function () {
+        // Slack so a budget just under the display interval doesn't halve the rate.
+        if (nowMs() - last + 0.5 < budget) {
+          schedule(fn);
+          return;
+        }
+        fn();
+      });
     }
     schedule(frame);
   };

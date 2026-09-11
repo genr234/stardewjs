@@ -6,6 +6,7 @@ const wwwroot = join(import.meta.dir, "../src/web/wwwroot");
 export const html = await Bun.file(join(wwwroot, "index.html")).text();
 export const hostJs = await Bun.file(join(wwwroot, "js/host.js")).text();
 export const ownershipJs = await Bun.file(join(wwwroot, "js/ownership.js")).text();
+export const settingsJs = await Bun.file(join(wwwroot, "js/settings.js")).text();
 export const jigsawJs = await Bun.file(join(wwwroot, "js/boot-jigsaw.js")).text();
 export const runtimeJs = await Bun.file(join(wwwroot, "js/runtime.js")).text();
 export const workerJs = await Bun.file(join(wwwroot, "js/game.worker.js")).text();
@@ -38,6 +39,10 @@ export type HostOptions = {
   search?: string;
   /** Backs a navigator.getGamepads(); mutate it to plug pads in and out. */
   gamepads?: any[];
+  /** Settings already stored in this browser, as js/settings.js would find them. */
+  settings?: Record<string, unknown>;
+  /** Site data blocked, the way a private window refuses it: by throwing. */
+  storageThrows?: boolean;
 };
 
 export type HostRun = {
@@ -53,6 +58,8 @@ export type HostRun = {
   windowListeners: Record<string, Array<(event: any) => void>>;
   canvas: Record<string, any>;
   profiler: Record<string, any>;
+  /** The page's localStorage, so a test can read back what a setting wrote. */
+  stored: Map<string, string>;
 };
 
 export function runHost(options: HostOptions = {}): HostRun {
@@ -67,15 +74,44 @@ export function runHost(options: HostOptions = {}): HostRun {
   const fetches: string[] = [];
   const workers: any[] = [];
   const windowListeners: Record<string, Array<(event: any) => void>> = {};
+  const stored = new Map<string, string>();
+  if (options.settings) stored.set("stardew.settings", JSON.stringify(options.settings));
+  const localStorage = options.storageThrows
+    ? {
+        getItem() {
+          throw new Error("The operation is insecure.");
+        },
+        setItem() {
+          throw new Error("The operation is insecure.");
+        },
+        removeItem() {
+          throw new Error("The operation is insecure.");
+        },
+      }
+    : {
+        getItem: (key: string) => stored.get(key) ?? null,
+        setItem: (key: string, value: string) => void stored.set(key, String(value)),
+        removeItem: (key: string) => void stored.delete(key),
+      };
   const profiler = {
     id: "profiler",
     hidden: true,
     textContent: "",
+    style: { cssText: "", display: "" },
+    setAttribute(name: string, value: string) {
+    // The DOM reflects `hidden` as a boolean property.
+      (this as unknown as Record<string, unknown>)[name] = name === "hidden" ? true : value;
+    },
+    removeAttribute(name: string) {
+      if (name === "hidden") this.hidden = false;
+    },
   };
   const canvas: Record<string, any> = {
     id: "theCanvas",
     clientWidth: 1280,
     clientHeight: 720,
+    style: {} as Record<string, string>,
+    classList: { add() {}, remove() {} },
     listeners: {} as Record<string, Array<(event: any) => void>>,
     lockCalls: 0,
     getBoundingClientRect() {
@@ -149,7 +185,11 @@ export function runHost(options: HostOptions = {}): HostRun {
     addEventListener(type: string, fn: (event: any) => void) {
       (windowListeners[type] = windowListeners[type] || []).push(fn);
     },
-    dispatchEvent: (event: { type: string }) => events.push(event.type),
+    dispatchEvent(event: { type: string }) {
+      events.push(event.type);
+      for (const fn of windowListeners[event.type] || []) fn(event);
+      return true;
+    },
   };
   const context = vm.createContext(
     Object.assign(window, {
@@ -158,6 +198,17 @@ export function runHost(options: HostOptions = {}): HostRun {
       Event,
       URLSearchParams,
       location: { search: options.search || "", href: "http://localhost/" },
+      localStorage,
+      CustomEvent: class {
+        type: string;
+        detail: unknown;
+        constructor(type: string, init?: { detail?: unknown }) {
+          this.type = type;
+          this.detail = init?.detail;
+        }
+      },
+      setInterval: () => 1,
+      clearInterval: () => {},
       console: { error() {} },
       Promise,
       Error,
@@ -182,16 +233,18 @@ export function runHost(options: HostOptions = {}): HostRun {
         : undefined,
     }),
   );
-  // Loaded ahead of the host on the page too: startGame() reads the unlock.
   vm.runInContext(ownershipJs, context);
-  // The real unlock arrives from the host a microtask later; a test that runs
-  // synchronously stands in for the page whose cookie the host still honours.
+  // The real unlock arrives a microtask later.
   if (owned) {
     context.ownership.unlocked = true;
     context.ownership.ready = true;
   }
+  // The page loads it ahead of the host too: host.js reads the profiler setting
+  // out of the store while it is still deciding what to send the worker.
+  vm.runInContext(settingsJs, context);
   vm.runInContext(hostJs, context);
   return {
+    stored,
     window: window as HostRun["window"],
     document,
     elements,

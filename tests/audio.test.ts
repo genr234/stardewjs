@@ -229,7 +229,8 @@ describe('xact mixing', () => {
 });
 
 /** A minimal Web Audio stand-in that records what was built and connected. */
-function page(decode: { fail?: boolean } = {}) {
+function page(options: { fail?: boolean; settings?: Record<string, number> } = {}) {
+  const decode = options;
   const started: any[] = [];
   const gains: any[] = [];
   const filters: any[] = [];
@@ -281,15 +282,32 @@ function page(decode: { fail?: boolean } = {}) {
       });
     },
   };
+  // Stands in for js/settings.js, which is a page away from the output but is
+  // where its levels come from.
+  const settingsValues: Record<string, number> = {
+    'audio.master': 1,
+    'audio.music': 1,
+    'audio.effects': 1,
+    ...(options.settings || {}),
+  };
+  const listeners: Record<string, Array<(event: any) => void>> = {};
   const context: any = {
     AudioContext: function () { return audioContext; },
     fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }),
     console: { warn() {} },
-    addEventListener() {},
+    settingsValues,
+    settingsState: () => ({ get: (name: string) => settingsValues[name] }),
+    addEventListener(type: string, fn: (event: any) => void) {
+      (listeners[type] = listeners[type] || []).push(fn);
+    },
+    fire(type: string, detail: unknown) {
+      for (const fn of listeners[type] || []) fn({ type, detail });
+    },
   };
   runInNewContext(outputSource, context);
   return {
     output: context.browserAudioOutput,
+    context,
     audioContext,
     started,
     gains,
@@ -373,13 +391,40 @@ describe('web audio output', () => {
     expect(output.stats().voices).toBe(0);
   });
 
-  test('a voice goes straight to the destination, with no category bus', async () => {
+  test("a voice hangs off the menu's buses, which only ever attenuate", async () => {
     const { output, started, finishDecode } = page();
     output.apply(PLAY);
     await flush();
     finishDecode();
     await flush();
-    expect(started[0].source.connectedTo.connectedTo).toEqual({ id: 'destination' });
+    // cue gain -> effects -> master -> destination.
+    const effects = started[0].source.connectedTo.connectedTo;
+    const master = effects.connectedTo;
+    expect(master.connectedTo).toEqual({ id: 'destination' });
+    expect(output.stats().levels).toEqual({ master: 1, music: 1, effects: 1 });
+  });
+
+  test('music and effects are carried on separate buses', async () => {
+    const { output, started, finishDecode } = page();
+    output.apply({ ...PLAY, category: 'Music' });
+    await flush();
+    finishDecode();
+    await flush();
+    const music = started[0].source.connectedTo.connectedTo;
+    const master = music.connectedTo;
+    expect(master.connectedTo).toEqual({ id: 'destination' });
+    expect(music).not.toBe(master);
+  });
+
+  test('the levels come from the settings store, and follow it', async () => {
+    const { output, context } = page({
+      settings: { 'audio.master': 0.5, 'audio.music': 0.25, 'audio.effects': 0 },
+    });
+    output.unlock();
+    expect(output.stats().levels).toEqual({ master: 0.5, music: 0.25, effects: 0 });
+    context.settingsValues['audio.master'] = 0.75;
+    context.fire('settings-change', { name: 'audio.master', value: 0.75 });
+    expect(output.stats().levels.master).toBe(0.75);
   });
 
   test('pausing remembers the offset and resuming starts from it', async () => {
