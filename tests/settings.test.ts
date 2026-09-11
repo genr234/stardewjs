@@ -3,6 +3,7 @@ import { runHost, settingsJs } from "./harness.ts";
 
 /** What the page holds for a player who has never opened the menu. */
 const DEFAULTS = {
+  "ui.theme": "stardew",
   "audio.master": 1,
   "audio.music": 1,
   "audio.effects": 1,

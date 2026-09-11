@@ -8,6 +8,24 @@
   <link rel="icon" href="chicken-js.png" />
   <base href="/" />
   <style>
+    /* Stardew theme values, so the page has colours before js/theme.js runs. */
+    :root {
+      --ui-bg: #1b1a17;
+      --ui-fg: #cfc6a8;
+      --ui-accent: #e6c35c;
+      --ui-accent-light: #f4e19a;
+      --ui-on-accent: #1b1a17;
+      --ui-muted: #8a8370;
+      --ui-sunken: #0e0d0b;
+      --ui-line: #6b6455;
+      --ui-rule: #3a3832;
+      --ui-error: #d98b6a;
+      --ui-pattern: none;
+      --ui-pattern-size: auto;
+      --ui-pattern-repeat: repeat;
+      --ui-pattern-rendering: auto;
+    }
+
     html,
     body {
       margin: 0;
@@ -15,6 +33,28 @@
       height: 100%;
       background: #000;
       overflow: hidden;
+    }
+
+    #title,
+    #boot,
+    #exit {
+      background-color: var(--ui-bg);
+      background-image: var(--ui-pattern);
+      background-repeat: var(--ui-pattern-repeat);
+      background-size: var(--ui-pattern-size);
+      background-position: center;
+      image-rendering: var(--ui-pattern-rendering);
+    }
+
+    /* Each panel is a card on that wallpaper. Without the solid ground behind
+       them the motifs would read straight through the text. */
+    .title-panel,
+    .settings-panel,
+    .boot-panel {
+      box-sizing: border-box;
+      padding: 22px;
+      border: 2px solid var(--ui-rule);
+      background: var(--ui-bg);
     }
 
     #theCanvas {
@@ -37,8 +77,7 @@
       z-index: 1;
       display: grid;
       place-items: center;
-      color: #cfc6a8;
-      background: #1b1a17;
+      color: var(--ui-fg);
       font: 14px ui-monospace, Menlo, monospace;
       text-align: center;
     }
@@ -53,7 +92,7 @@
       font-size: 20px;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: #e6c35c;
+      color: var(--ui-accent);
     }
 
     /* Grow with the panel, never past native size; keep pixels square. */
@@ -70,9 +109,9 @@
       width: 100%;
       box-sizing: border-box;
       padding: 10px;
-      border: 2px solid #cfc6a8;
-      background: #0e0d0b;
-      color: #cfc6a8;
+      border: 2px solid var(--ui-fg);
+      background: var(--ui-sunken);
+      color: var(--ui-fg);
       font: inherit;
       letter-spacing: 0.12em;
       text-transform: uppercase;
@@ -81,19 +120,19 @@
 
     .title-play:hover,
     .title-play:focus-visible {
-      background: #e6c35c;
-      color: #1b1a17;
+      background: var(--ui-accent);
+      color: var(--ui-on-accent);
       outline: none;
     }
 
     .title-detail {
       margin: 12px 0 0;
-      color: #8a8370;
+      color: var(--ui-muted);
       font-size: 12px;
     }
 
     .title-detail code {
-      color: #cfc6a8;
+      color: var(--ui-fg);
       font: inherit;
     }
 
@@ -106,8 +145,8 @@
     }
 
     .title-play:focus-within {
-      background: #e6c35c;
-      color: #1b1a17;
+      background: var(--ui-accent);
+      color: var(--ui-on-accent);
     }
 
     .title-play.is-busy {
@@ -116,7 +155,7 @@
 
     .title-error {
       margin: 12px 0 0;
-      color: #d98b6a;
+      color: var(--ui-error);
       font-size: 12px;
     }
 
@@ -125,16 +164,14 @@
       padding: 0;
       border: 0;
       background: none;
-      color: #8a8370;
+      color: var(--ui-muted);
       font: inherit;
       font-size: 12px;
       text-decoration: underline;
       cursor: pointer;
     }
 
-    /* Shown once the game has quit: the canvas keeps its last frame behind it. */
-    /* An id selector outranks the UA rule for [hidden], so say it here too: the
-       overlay starts hidden and Alpine toggles the attribute. */
+    /* An id selector outranks the UA rule for [hidden]. */
     #exit[hidden] {
       display: none;
     }
@@ -145,8 +182,7 @@
       z-index: 3;
       display: grid;
       place-items: center;
-      color: #cfc6a8;
-      background: #1b1a17;
+      color: var(--ui-fg);
       font: 14px ui-monospace, Menlo, monospace;
       text-align: center;
     }
@@ -159,9 +195,9 @@
       box-sizing: border-box;
       margin: 20px 0 0;
       padding: 10px;
-      border: 2px solid #6b6455;
-      background: #0e0d0b;
-      color: #cfc6a8;
+      border: 2px solid var(--ui-line);
+      background: var(--ui-sunken);
+      color: var(--ui-fg);
       font: inherit;
       letter-spacing: 0.12em;
       text-transform: uppercase;
@@ -170,9 +206,9 @@
 
     .title-settings-open:hover,
     .title-settings-open:focus-visible {
-      border-color: #cfc6a8;
-      background: #cfc6a8;
-      color: #1b1a17;
+      border-color: var(--ui-fg);
+      background: var(--ui-fg);
+      color: var(--ui-on-accent);
       outline: none;
     }
 
@@ -182,7 +218,6 @@
       width: min(34rem, calc(100vw - 3rem));
       max-height: calc(100vh - 3rem);
       overflow-y: auto;
-      padding: 4px;
       text-align: left;
     }
 
@@ -192,13 +227,83 @@
       font-size: 20px;
       letter-spacing: 0.18em;
       text-transform: uppercase;
-      color: #e6c35c;
+      color: var(--ui-accent);
     }
 
     .settings-group {
       margin: 24px 0 0;
       padding: 0 0 4px;
-      border-top: 1px solid #3a3832;
+      border-top: 1px solid var(--ui-rule);
+    }
+
+    /* The theme picker is the first thing in the menu and sits directly under
+       the title, so it goes without the rule that separates the rest. */
+    .settings-group:first-of-type {
+      margin-top: 14px;
+      border-top: 0;
+    }
+
+    /* One card per theme, as many across as the panel has room for. A theme is
+       a look, so the swatch shows the look rather than naming its colours:
+       the theme's own ground, its own wallpaper, and two chips for the two
+       colours the menu itself would be written in. */
+    .theme-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+      gap: 10px;
+    }
+
+    .theme-swatch {
+      display: block;
+      padding: 0;
+      border: 2px solid var(--ui-line);
+      background: var(--ui-sunken);
+      color: var(--ui-muted);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .theme-swatch:hover,
+    .theme-swatch:focus-visible {
+      border-color: var(--ui-fg);
+      color: var(--ui-fg);
+      outline: none;
+    }
+
+    .theme-swatch.is-chosen {
+      border-color: var(--ui-accent);
+      color: var(--ui-fg);
+    }
+
+    .theme-preview {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 4.5rem;
+      padding: 6px;
+      border-bottom: 2px solid var(--ui-line);
+    }
+
+    .theme-chip {
+      width: 14px;
+      height: 14px;
+      border: 1px solid rgba(0, 0, 0, 0.35);
+    }
+
+    .theme-name {
+      display: block;
+      padding: 7px 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* A tick rather than a second colour: on the paler themes the border alone
+       is easy to miss. */
+    .theme-swatch.is-chosen .theme-name::after {
+      content: " \2713";
+      color: var(--ui-accent);
     }
 
     .settings-heading {
@@ -207,7 +312,7 @@
       font-size: 12px;
       letter-spacing: 0.16em;
       text-transform: uppercase;
-      color: #8a8370;
+      color: var(--ui-muted);
     }
 
     .settings-row {
@@ -232,13 +337,13 @@
       width: 16px;
       height: 16px;
       margin: 0;
-      accent-color: #e6c35c;
+      accent-color: var(--ui-accent);
       cursor: pointer;
     }
 
     .settings-slider {
       flex: 0 1 12rem;
-      accent-color: #e6c35c;
+      accent-color: var(--ui-accent);
       cursor: pointer;
     }
 
@@ -246,7 +351,7 @@
       flex: none;
       width: 3.5rem;
       text-align: right;
-      color: #8a8370;
+      color: var(--ui-muted);
       font-variant-numeric: tabular-nums;
     }
 
@@ -258,9 +363,9 @@
       width: 12rem;
       box-sizing: border-box;
       padding: 6px 8px;
-      border: 2px solid #6b6455;
-      background: #0e0d0b;
-      color: #cfc6a8;
+      border: 2px solid var(--ui-line);
+      background: var(--ui-sunken);
+      color: var(--ui-fg);
       font: inherit;
       cursor: pointer;
     }
@@ -271,7 +376,7 @@
 
     .settings-select:focus-visible,
     .settings-text:focus-visible {
-      border-color: #e6c35c;
+      border-color: var(--ui-accent);
       outline: none;
     }
 
@@ -279,7 +384,7 @@
        because it reports what just happened rather than explaining a control. */
     .settings-note {
       margin: 10px 0 0;
-      color: #8a8370;
+      color: var(--ui-muted);
       font-size: 12px;
     }
 
@@ -299,9 +404,9 @@
       box-sizing: border-box;
       margin: 4px 0 0;
       padding: 8px 10px;
-      border: 2px solid #6b6455;
-      background: #0e0d0b;
-      color: #cfc6a8;
+      border: 2px solid var(--ui-line);
+      background: var(--ui-sunken);
+      color: var(--ui-fg);
       font: inherit;
       text-align: center;
       letter-spacing: 0.08em;
@@ -312,16 +417,16 @@
     .settings-button:hover,
     .settings-button:focus-visible,
     .settings-button:focus-within {
-      border-color: #cfc6a8;
-      background: #cfc6a8;
-      color: #1b1a17;
+      border-color: var(--ui-fg);
+      background: var(--ui-fg);
+      color: var(--ui-on-accent);
       outline: none;
     }
 
     .settings-button[disabled],
     .settings-button.is-busy {
       cursor: progress;
-      color: #8a8370;
+      color: var(--ui-muted);
     }
 
     .settings-panel .title-play {
@@ -338,8 +443,7 @@
       inset: 0;
       display: grid;
       place-items: center;
-      color: #cfc6a8;
-      background: #1b1a17;
+      color: var(--ui-fg);
       font: 14px ui-monospace, Menlo, monospace;
       text-align: center;
     }
@@ -366,7 +470,7 @@
       touch-action: none;
       cursor: grab;
       image-rendering: pixelated;
-      background: #0e0d0b;
+      background: var(--ui-sunken);
     }
 
     #boot-jigsaw:active {
@@ -377,15 +481,15 @@
       height: 16px;
       box-sizing: border-box;
       padding: 2px;
-      border: 2px solid #cfc6a8;
-      background: #0e0d0b;
+      border: 2px solid var(--ui-fg);
+      background: var(--ui-sunken);
     }
 
     .boot-bar-fill {
       height: 100%;
       width: 0%;
-      background: #e6c35c;
-      box-shadow: inset 0 1px 0 #f4e19a;
+      background: var(--ui-accent);
+      box-shadow: inset 0 1px 0 var(--ui-accent-light);
     }
 
     @media (prefers-reduced-motion: no-preference) {
@@ -396,7 +500,7 @@
 
     .boot-detail {
       margin: 12px 0 0;
-      color: #8a8370;
+      color: var(--ui-muted);
       font-size: 12px;
     }
 
@@ -419,8 +523,8 @@
       max-height: calc(100vh - 16px);
       overflow: auto;
       pointer-events: none;
-      color: #e8e0c8;
-      background: rgba(14, 13, 11, 0.82);
+      color: var(--ui-fg);
+      background: color-mix(in srgb, var(--ui-sunken) 82%, transparent);
       font: 11px/1.4 ui-monospace, Menlo, monospace;
       transform: translateZ(0);
       -webkit-transform: translateZ(0);
@@ -437,7 +541,7 @@
     }
 
     #profiler .profiler-chart-label {
-      color: #8a8370;
+      color: var(--ui-muted);
       font-size: 10px;
     }
 
@@ -455,7 +559,7 @@
       background: currentColor;
     }
 
-    #profiler .profiler-ind[data-key="wasm"] { color: #e6c35c; }
+    #profiler .profiler-ind[data-key="wasm"] { color: var(--ui-accent); }
     #profiler .profiler-ind[data-key="js"] { color: #8ec8c8; }
     #profiler .profiler-ind[data-key="gc"] { color: #c9a0dc; }
 
@@ -463,7 +567,7 @@
       display: block;
       width: 240px;
       height: 48px;
-      background: #0e0d0b;
+      background: var(--ui-sunken);
     }
   </style>
 </head>
@@ -502,6 +606,24 @@
 
     <div class="settings-panel" x-show="$store.settings.visible" x-init="$store.saves.refresh()">
       <h2 class="settings-title">Settings</h2>
+      <section class="settings-group">
+        <h3 class="settings-heading">Theme</h3>
+        <div class="theme-grid">
+          <template x-for="theme in $store.themes.list" :key="theme.id">
+            <button class="theme-swatch" type="button"
+              :class="$store.settings.get('ui.theme') === theme.id ? 'is-chosen' : null"
+              :aria-pressed="$store.settings.get('ui.theme') === theme.id"
+              @click="$store.settings.set('ui.theme', theme.id)">
+              <span class="theme-preview" :style="$store.themes.preview(theme.id)">
+                <span class="theme-chip" :style="{ background: theme.palette.accent }"></span>
+                <span class="theme-chip" :style="{ background: theme.palette.fg }"></span>
+              </span>
+              <span class="theme-name" x-text="theme.name"></span>
+            </button>
+          </template>
+        </div>
+      </section>
+
       <section class="settings-group">
         <h3 class="settings-heading">Sound</h3>
         <label class="settings-row">
@@ -662,6 +784,7 @@
   <script type="module" src="js/audio-output.js"></script>
   <script type="module" src="js/ownership.js"></script>
   <script type="module" src="js/settings.js"></script>
+  <script type="module" src="js/theme.js"></script>
   <script src="js/save-storage.js"></script>
   <script type="module" src="js/save-transfer.js"></script>
   <script type="module" src="js/host.js"></script>
