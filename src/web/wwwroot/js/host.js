@@ -83,8 +83,56 @@ console.error = function () {
   };
 })();
 
-// Combined bar: runtime downloads occupy the first half, game asset XHRs the second.
-// Alpine.store('boot') owns the overlay; this script only mutates that state.
+// Quit overlay (see src/web/BrowserExit.cs). Only a reload restarts the game.
+(function () {
+  var exit = {
+    visible: false,
+    done: false,
+    error: '',
+    get status() {
+      if (this.error) return 'the game closed, but the save could not be written';
+      return this.done ? 'the game has closed' : 'closing the game';
+    },
+    get detail() {
+      if (this.error) return this.error;
+      return this.done ? 'your farm is saved in this browser' : 'writing your farm to this browser';
+    },
+    again: function () {
+      location.reload();
+    },
+  };
+
+  window.exitState = function () {
+    if (window.Alpine) {
+      var stored = Alpine.store('exit');
+      if (stored) return stored;
+    }
+    return exit;
+  };
+
+  document.addEventListener('alpine:init', function () {
+    Alpine.store('exit', exit);
+  });
+
+  window.browserExitPage = {
+    apply: function (message) {
+      var state = window.exitState();
+      state.visible = true;
+      state.done = message.phase === 'exited';
+      state.error = message.error || '';
+      // Tests and a pre-Alpine page still need something readable on screen.
+      if (!window.Alpine) {
+        var overlay = document.getElementById('exit');
+        if (overlay) {
+          overlay.hidden = false;
+          overlay.textContent = state.status;
+        }
+      }
+    },
+  };
+})();
+
+// Progress bar: runtime downloads fill the first half, game assets the second.
 (function () {
   var boot = {
     runtimeLoaded: 0,
@@ -249,6 +297,9 @@ console.error = function () {
         break;
       case 'audio':
         if (window.browserAudioOutput) window.browserAudioOutput.apply(data.command);
+        break;
+      case 'exit':
+        window.browserExitPage.apply(data);
         break;
       case 'gamepad-vibrate':
         vibrateGamepad(data);

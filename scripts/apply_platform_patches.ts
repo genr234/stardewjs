@@ -589,6 +589,25 @@ export function applyPlatformPatches(srcRoot = defaultSrc): void {
 #endif`,
   );
 
+  // --- a browser tab cannot exit ----------------------------------------------
+  // See src/web/BrowserExit.cs.
+  patch(
+    srcRoot,
+    "StardewValley/InstanceGame.cs",
+    `\tpublic void Exit()
+\t{
+\t\tGameRunner.instance.Exit();
+\t}`,
+    `\tpublic void Exit()
+\t{
+#if WEB
+\t\tStardewValley.Web.BrowserExit.Request();
+#else
+\t\tGameRunner.instance.Exit();
+#endif
+\t}`,
+  );
+
   // --- Mouse.SetPosition does not exist in a browser --------------------------
   // A page can't move the pointer; see src/web/BrowserMouse.cs.
   patch(

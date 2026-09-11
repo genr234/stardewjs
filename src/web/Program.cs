@@ -40,6 +40,8 @@ public static class WebProgram
 
 		BrowserMouse.Initialize(_js);
 
+		BrowserExit.Initialize(_js);
+
 		try
 		{
 			Stage("restoring-saves");
@@ -119,6 +121,12 @@ public static class WebProgram
 		{
 			if (_runner == null)
 			{
+				return false;
+			}
+			if (BrowserExit.Requested)
+			{
+				_runner = null;
+				_ = BrowserExit.ShutdownAsync();
 				return false;
 			}
 			try

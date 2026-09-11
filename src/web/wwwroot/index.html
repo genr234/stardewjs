@@ -123,6 +123,25 @@
       cursor: pointer;
     }
 
+    /* Shown once the game has quit: the canvas keeps its last frame behind it. */
+    /* An id selector outranks the UA rule for [hidden], so say it here too: the
+       overlay starts hidden and Alpine toggles the attribute. */
+    #exit[hidden] {
+      display: none;
+    }
+
+    #exit {
+      position: fixed;
+      inset: 0;
+      z-index: 3;
+      display: grid;
+      place-items: center;
+      color: #cfc6a8;
+      background: #1b1a17;
+      font: 14px ui-monospace, Menlo, monospace;
+      text-align: center;
+    }
+
     #boot {
       position: fixed;
       inset: 0;
@@ -300,6 +319,15 @@
       <p class="boot-detail" x-text="$store.boot.detail">this takes a while on a cold cache</p>
     </div>
     <pre class="boot-error" x-show="$store.boot.failed" x-text="$store.boot.error"></pre>
+  </div>
+  <div id="exit" x-data :role="$store.exit.error ? 'alert' : null" hidden
+    x-effect="$el.hidden = !$store.exit.visible">
+    <div class="title-panel">
+      <h1 class="title-name">Stardew Valley</h1>
+      <p class="boot-status" x-text="$store.exit.status"></p>
+      <button class="title-play" type="button" x-show="$store.exit.done" @click="$store.exit.again()">Play again</button>
+      <p class="title-detail" x-text="$store.exit.detail"></p>
+    </div>
   </div>
   <div id="profiler" hidden>
     <div class="profiler-charts">
