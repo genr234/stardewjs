@@ -217,11 +217,13 @@ export function startHost(options: HostOptions) {
 
 export const DEFAULT_REFERENCE = "vendor/game/MacOS/Stardew Valley.dll";
 
+/** Token signing key, kept on disk so host restarts don't log players out. Not committed. */
+export const DEFAULT_SECRET = ".ownership-key";
+
 export async function openGate(repoRoot: string): Promise<OwnershipGate> {
   const referencePath = process.env.OWNERSHIP_REFERENCE ?? join(repoRoot, DEFAULT_REFERENCE);
-  const gate = new OwnershipGate({ referencePath });
-  // Fail here rather than on the first player: without a reference nothing
-  // under Content/Audio/_framework can be served at all.
+  const secretPath = process.env.OWNERSHIP_SECRET ?? join(repoRoot, DEFAULT_SECRET);
+  const gate = new OwnershipGate({ referencePath, secretPath });
   await gate.referenceSize();
   return gate;
 }

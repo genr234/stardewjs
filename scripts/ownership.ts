@@ -1,23 +1,12 @@
-// Proof of ownership, decided by the host rather than by the page.
-//
-// The page's own check (src/web/wwwroot/js/ownership.js) can only refuse to
-// start the game; it cannot stop anyone from pulling the 544 MB of Content, the
-// extracted audio, or the game assembly itself straight out of the server with
-// curl. This is what closes that: until a connection has proved it holds the
-// game, those paths are refused.
-//
-// The proof is a challenge over the file's own bytes. The host names a handful
-// of random windows into its reference copy, the page hashes those windows of
-// the file the player picked, and the host compares against its own bytes. The
-// file is never uploaded, the windows differ every time so a recorded answer is
-// worth nothing, and passing requires the actual bytes rather than a digest
-// someone read off a forum.
-//
-// This deliberately demands the *same build* the host streams. The Content it
-// serves came out of that install, so a 1.6.15 page against 1.6.9 assets is not
-// a configuration worth admitting anyway.
+// Server-side proof of ownership. Until a connection proves it holds the game,
+// Content, Audio and _framework are refused. The host picks random byte ranges
+// of its reference copy; the page hashes the same ranges of the player's file.
+// The same build is required. Passing yields a signed, expiring token cookie,
+// so nothing is stored per player.
 
-import { timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes as cryptoRandomBytes, timingSafeEqual } from "node:crypto";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export type Challenge = {
   id: string;
@@ -31,6 +20,8 @@ export type GateOptions = {
   randomBytes?: (count: number) => Uint8Array;
   challengeTtlMs?: number;
   tokenTtlMs?: number;
+  /** Persisting the key lets tokens survive restarts. */
+  secretPath?: string;
 };
 
 export const COOKIE_NAME = "stardew_ownership";
@@ -41,6 +32,7 @@ const WINDOW_BYTES = 64 * 1024;
 const WINDOW_COUNT = 4;
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const TOKEN_SHAPE = /^([0-9a-z]{1,12})\.([0-9a-f]{64})$/;
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -61,6 +53,21 @@ async function sha256(parts: Uint8Array[]): Promise<string> {
     at += part.length;
   }
   return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", joined)));
+}
+
+function loadSecret(path: string): Buffer {
+  const stored = (() => {
+    try {
+      return readFileSync(path, "utf8").trim();
+    } catch {
+      return "";
+    }
+  })();
+  if (/^[0-9a-f]{64}$/.test(stored)) return Buffer.from(stored, "hex");
+  const secret = cryptoRandomBytes(32);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, secret.toString("hex") + "\n", { mode: 0o600 });
+  return secret;
 }
 
 function sameSecret(a: string, b: string): boolean {
@@ -87,7 +94,10 @@ export class OwnershipGate {
   private readonly challengeTtlMs: number;
   private readonly tokenTtlMs: number;
   private readonly pending = new Map<string, { ranges: Array<[number, number]>; expiresAt: number }>();
-  private readonly tokens = new Map<string, number>();
+  /** Tokens revoked via /forget, kept until they would have expired. */
+  private readonly revoked = new Map<string, number>();
+  private readonly secret: Buffer;
+  private binding: string | null = null;
   private reference: Promise<{ size: number }> | null = null;
 
   constructor(options: GateOptions) {
@@ -96,6 +106,7 @@ export class OwnershipGate {
     this.randomBytes = options.randomBytes ?? defaultRandomBytes;
     this.challengeTtlMs = options.challengeTtlMs ?? CHALLENGE_TTL_MS;
     this.tokenTtlMs = options.tokenTtlMs ?? TOKEN_TTL_MS;
+    this.secret = options.secretPath ? loadSecret(options.secretPath) : cryptoRandomBytes(32);
   }
 
   async referenceSize(): Promise<number> {
@@ -117,7 +128,28 @@ export class OwnershipGate {
   private sweep() {
     const at = this.now();
     for (const [id, entry] of this.pending) if (entry.expiresAt <= at) this.pending.delete(id);
-    for (const [token, expiresAt] of this.tokens) if (expiresAt <= at) this.tokens.delete(token);
+    for (const [token, expiresAt] of this.revoked) if (expiresAt <= at) this.revoked.delete(token);
+  }
+
+  /**
+   * Tokens are bound to this host's build, so switching builds invalidates them.
+   * Synchronous because verify() is on the asset path.
+   */
+  private referenceTag(): string | null {
+    if (this.binding === null) {
+      try {
+        const info = statSync(this.referencePath);
+        if (!info.isFile() || info.size === 0) return null;
+        this.binding = `${this.referencePath}:${info.size}`;
+      } catch {
+        return null;
+      }
+    }
+    return this.binding;
+  }
+
+  private sign(body: string, tag: string): string {
+    return createHmac("sha256", this.secret).update(`${body}\n${tag}`).digest("hex");
   }
 
   async challenge(): Promise<Challenge> {
@@ -158,24 +190,29 @@ export class OwnershipGate {
   }
 
   grant(): string {
-    const token = toHex(this.randomBytes(32));
-    this.tokens.set(token, this.now() + this.tokenTtlMs);
-    return token;
+    const tag = this.referenceTag();
+    if (!tag) throw new Error(`No reference copy of the game at ${this.referencePath}`);
+    const body = (this.now() + this.tokenTtlMs).toString(36);
+    return `${body}.${this.sign(body, tag)}`;
   }
 
   verify(token: string | null): boolean {
     if (!token) return false;
-    const expiresAt = this.tokens.get(token);
-    if (expiresAt === undefined) return false;
-    if (expiresAt <= this.now()) {
-      this.tokens.delete(token);
-      return false;
-    }
-    return true;
+    const parts = TOKEN_SHAPE.exec(token);
+    if (!parts) return false;
+    const [, body, signature] = parts as unknown as [string, string, string];
+    const expiresAt = parseInt(body, 36);
+    if (!Number.isFinite(expiresAt) || expiresAt <= this.now()) return false;
+    if (this.revoked.has(token)) return false;
+    const tag = this.referenceTag();
+    if (!tag) return false;
+    return sameSecret(signature, this.sign(body, tag));
   }
 
   revoke(token: string | null) {
-    if (token) this.tokens.delete(token);
+    if (!token || !this.verify(token)) return;
+    const parts = TOKEN_SHAPE.exec(token);
+    this.revoked.set(token, parseInt(parts![1]!, 36));
   }
 
   get tokenLifetimeSeconds(): number {

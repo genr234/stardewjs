@@ -10,6 +10,9 @@ node_modules/
 .playwright-cli/
 .DS_Store
 
+# The key the ownership gate signs its tokens with, written on first serve.
+.ownership-key
+
 # Local symlink to the vendored game content, created by the web build.
 src/web/wwwroot/Content
 src/web/wwwroot/Audio
