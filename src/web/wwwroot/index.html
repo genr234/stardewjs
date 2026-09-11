@@ -7,7 +7,6 @@
   <title>Stardew Valley</title>
   <link rel="icon" href="chicken-js.png" />
   <base href="/" />
-  <script defer src="js/alpine.min.js"></script>
   <style>
     html,
     body {
@@ -658,13 +657,16 @@
     </div>
   </div>
 
-  <script src="js/audio-output.js"></script>
-  <script src="js/ownership.js"></script>
-  <script src="js/settings.js"></script>
+  <!-- js/save-storage.js stays a classic script because the worker
+       importScripts it. Alpine goes last so every store registers first. -->
+  <script type="module" src="js/audio-output.js"></script>
+  <script type="module" src="js/ownership.js"></script>
+  <script type="module" src="js/settings.js"></script>
   <script src="js/save-storage.js"></script>
-  <script src="js/save-transfer.js"></script>
-  <script src="js/host.js"></script>
-  <script src="js/boot-jigsaw.js"></script>
+  <script type="module" src="js/save-transfer.js"></script>
+  <script type="module" src="js/host.js"></script>
+  <script type="module" src="js/boot-jigsaw.js"></script>
+  <script defer src="js/alpine.min.js"></script>
 </body>
 
 </html>

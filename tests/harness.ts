@@ -4,6 +4,15 @@ import * as vm from "node:vm";
 const wwwroot = join(import.meta.dir, "../src/web/wwwroot");
 
 export const html = await Bun.file(join(wwwroot, "index.html")).text();
+
+/** Bundles an ES module entry into an IIFE the sandbox can run. */
+export async function bundle(entry: string): Promise<string> {
+  const built = await Bun.build({ entrypoints: [join(wwwroot, entry)], format: "iife", target: "browser" });
+  if (!built.success) throw new Error(`could not bundle ${entry}: ${built.logs.join("\n")}`);
+  return await built.outputs[0]!.text();
+}
+
+const pageBundle = await bundle("js/host.js");
 export const hostJs = await Bun.file(join(wwwroot, "js/host.js")).text();
 export const ownershipJs = await Bun.file(join(wwwroot, "js/ownership.js")).text();
 export const settingsJs = await Bun.file(join(wwwroot, "js/settings.js")).text();
@@ -233,16 +242,12 @@ export function runHost(options: HostOptions = {}): HostRun {
         : undefined,
     }),
   );
-  vm.runInContext(ownershipJs, context);
+  vm.runInContext(pageBundle, context);
   // The real unlock arrives a microtask later.
   if (owned) {
     context.ownership.unlocked = true;
     context.ownership.ready = true;
   }
-  // The page loads it ahead of the host too: host.js reads the profiler setting
-  // out of the store while it is still deciding what to send the worker.
-  vm.runInContext(settingsJs, context);
-  vm.runInContext(hostJs, context);
   return {
     stored,
     window: window as HostRun["window"],

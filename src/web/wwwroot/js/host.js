@@ -1,7 +1,10 @@
-// Identifies this page load, and is stamped onto the scripts the game worker
-// imports. The worker reads them through importScripts, which uses the HTTP
-// cache and is not reliably bypassed by reloading the page, so without a token
-// an edited js/*.js can keep running as its previous version.
+// Entry module: boot, worker and frame loop. Much of it hangs off window for
+// callers outside the module graph (JS interop, Alpine, js/runtime.js).
+import { ownershipState } from './ownership.js';
+import { settingsState } from './settings.js';
+import { browserAudioOutput } from './audio-output.js';
+
+// Cache-busts the worker's importScripts, which reloads don't reliably bypass.
 window.__runtimeVersion = window.__runtimeVersion || String(Date.now());
 
 window.__errs = [];
@@ -71,10 +74,7 @@ console.error = function () {
   window.startGame = function () {
     var state = window.titleState();
     if (!state.visible) return;
-    // js/ownership.js unlocks this once the player has produced their own copy
-    // of the game assembly. A missing script means no unlock, so a failure to
-    // load it closes the gate rather than opening it.
-    var owner = typeof window.ownershipState === 'function' ? window.ownershipState() : null;
+    var owner = ownershipState();
     if (!owner || !owner.unlocked) return;
     state.visible = false;
     var overlay = document.getElementById('title');
@@ -296,7 +296,7 @@ console.error = function () {
         window.__boot.addAsset();
         break;
       case 'audio':
-        if (window.browserAudioOutput) window.browserAudioOutput.apply(data.command);
+        browserAudioOutput.apply(data.command);
         break;
       case 'exit':
         window.browserExitPage.apply(data);
@@ -719,13 +719,9 @@ console.error = function () {
     worker.onmessage = function (event) {
       handleWorkerMessage(event.data);
     };
-    // A one-shot cue is over when its source ends, which only the page can see.
-    // The runtime needs to know so it can retire the cue the game still holds.
-    if (window.browserAudioOutput) {
-      window.browserAudioOutput.onEnded = function (handle) {
-        worker.postMessage({ type: 'audio-ended', handle: handle });
-      };
-    }
+    browserAudioOutput.onEnded = function (handle) {
+      worker.postMessage({ type: 'audio-ended', handle: handle });
+    };
     var boot = canvasMetrics(canvas);
     boot.type = 'boot';
     boot.canvas = offscreen;
@@ -749,11 +745,9 @@ console.error = function () {
   };
 })();
 
-// What the settings menu says, or the documented default when it has never
-// been asked. js/settings.js is loaded ahead of this file on the page; a build
-// that somehow drops it still runs, on defaults supplied by the caller.
+// Falls back to js/settings.js's own copy until the Alpine store exists.
 window.settingValue = function (name, fallback) {
-  var settings = typeof window.settingsState === 'function' ? window.settingsState() : null;
+  var settings = settingsState();
   if (!settings || typeof settings.get !== 'function') return fallback;
   var value = settings.get(name);
   return value === undefined ? fallback : value;
@@ -820,7 +814,7 @@ window.profilerPreference = function () {
   try {
     if (new URLSearchParams(location.search).has('profiler')) return true;
   } catch (err) {}
-  var settings = typeof window.settingsState === 'function' ? window.settingsState() : null;
+  var settings = settingsState();
   return !!(settings && typeof settings.get === 'function' && settings.get('profiler') === true);
 };
 

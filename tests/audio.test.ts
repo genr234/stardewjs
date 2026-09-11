@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { runInNewContext } from 'node:vm';
 
+import { bundle } from './harness.ts';
+
 const cueSource = await Bun.file(new URL('../src/web/wwwroot/js/audio.js', import.meta.url)).text();
-const outputSource = await Bun.file(new URL('../src/web/wwwroot/js/audio-output.js', import.meta.url)).text();
+const outputSource = await bundle('js/audio-output.js');
 
 const CUES = {
   Cues: {
@@ -282,28 +284,31 @@ function page(options: { fail?: boolean; settings?: Record<string, number> } = {
       });
     },
   };
-  // Stands in for js/settings.js, which is a page away from the output but is
-  // where its levels come from.
-  const settingsValues: Record<string, number> = {
-    'audio.master': 1,
-    'audio.music': 1,
-    'audio.effects': 1,
-    ...(options.settings || {}),
-  };
+  const stored = JSON.stringify(options.settings || {});
   const listeners: Record<string, Array<(event: any) => void>> = {};
   const context: any = {
     AudioContext: function () { return audioContext; },
     fetch: async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }),
     console: { warn() {} },
-    settingsValues,
-    settingsState: () => ({ get: (name: string) => settingsValues[name] }),
+    localStorage: { getItem: () => stored, setItem() {}, removeItem() {} },
+    document: { addEventListener() {} },
+    CustomEvent: class {
+      type: string;
+      detail: unknown;
+      constructor(type: string, init?: { detail?: unknown }) {
+        this.type = type;
+        this.detail = init?.detail;
+      }
+    },
     addEventListener(type: string, fn: (event: any) => void) {
       (listeners[type] = listeners[type] || []).push(fn);
     },
-    fire(type: string, detail: unknown) {
-      for (const fn of listeners[type] || []) fn({ type, detail });
+    dispatchEvent(event: { type: string }) {
+      for (const fn of listeners[event.type] || []) fn(event);
+      return true;
     },
   };
+  context.window = context;
   runInNewContext(outputSource, context);
   return {
     output: context.browserAudioOutput,
@@ -422,8 +427,7 @@ describe('web audio output', () => {
     });
     output.unlock();
     expect(output.stats().levels).toEqual({ master: 0.5, music: 0.25, effects: 0 });
-    context.settingsValues['audio.master'] = 0.75;
-    context.fire('settings-change', { name: 'audio.master', value: 0.75 });
+    context.settingsState().set('audio.master', 0.75);
     expect(output.stats().levels.master).toBe(0.75);
   });
 

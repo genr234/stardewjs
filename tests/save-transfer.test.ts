@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { IDBFactory } from "fake-indexeddb";
 import { runInNewContext } from "node:vm";
 
+import { bundle } from "./harness.ts";
+
+// js/save-storage.js is a classic script, shared with the game worker through
+// importScripts; js/save-transfer.js is a module, so it is bundled to be run.
 const storageSource = await Bun.file(new URL("../src/web/wwwroot/js/save-storage.js", import.meta.url)).text();
-const transferSource = await Bun.file(new URL("../src/web/wwwroot/js/save-transfer.js", import.meta.url)).text();
+const transferSource = await bundle("js/save-transfer.js");
 
 /** The page's half of the saves panel, with the download and the confirm faked. */
 function page(options: { indexedDB?: IDBFactory; confirm?: boolean } = {}) {
