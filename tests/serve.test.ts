@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { COOKIE_NAME, OwnershipGate } from "../scripts/ownership.ts";
-import { ISOLATION_HEADERS, isGatedPath, matchesEntityTag, RateLimiter, requestContext, SECURITY_HEADERS, startHost } from "../scripts/serve.ts";
+import { hostBinding, ISOLATION_HEADERS, isGatedPath, matchesEntityTag, RateLimiter, requestContext, SECURITY_HEADERS, startHost } from "../scripts/serve.ts";
 
 const wwwroot = join(import.meta.dir, "fixtures/wwwroot");
 const frameworkRoot = join(import.meta.dir, "fixtures/framework");
@@ -179,8 +179,42 @@ describe("request context", () => {
     const req = new Request("http://localhost/", {
       headers: { "X-Forwarded-For": "1.2.3.4", "X-Forwarded-Proto": "https" },
     });
-    expect(requestContext(req, server)).toEqual({ client: "10.0.0.5", secure: false });
-    expect(requestContext(req, server, true)).toEqual({ client: "1.2.3.4", secure: true });
+    expect(requestContext(req, server)).toMatchObject({ client: "10.0.0.5", secure: false });
+    expect(requestContext(req, server, true)).toMatchObject({ client: "1.2.3.4", secure: true });
+  });
+
+  test("behind a proxy that passes X-Forwarded-For through, trusts only the scheme", () => {
+    const req = new Request("http://localhost/", {
+      headers: { "X-Forwarded-For": "1.2.3.4", "X-Forwarded-Proto": "https" },
+    });
+    expect(requestContext(req, server, "proto")).toMatchObject({ client: "10.0.0.5", secure: true });
+  });
+
+  test("behind a proxy that re-addresses the request, the browser's host comes from X-Forwarded-Host", () => {
+    // Nest's WebSocket proxy drops Host and dials the container by address.
+    const req = new Request("http://10.60.6.74/relay", {
+      headers: { Host: "10.60.6.74", "X-Forwarded-Host": "stardew.example" },
+    });
+    expect(requestContext(req, server).host).toBe("10.60.6.74");
+    expect(requestContext(req, server, "proto").host).toBe("stardew.example");
+  });
+
+  test("reads the host's binding and limits from the environment", () => {
+    expect(hostBinding({})).toEqual({
+      hostname: "127.0.0.1",
+      trustProxy: false,
+      secureCookies: false,
+      ownershipPerMinute: undefined,
+      relayPerMinute: undefined,
+    });
+    expect(hostBinding({ HOST: "0.0.0.0", TRUST_PROXY: "proto", SECURE_COOKIES: "1", OWNERSHIP_RATE: "300", RELAY_RATE: "nope" })).toEqual({
+      hostname: "0.0.0.0",
+      trustProxy: "proto",
+      secureCookies: true,
+      ownershipPerMinute: 300,
+      relayPerMinute: undefined,
+    });
+    expect(hostBinding({ TRUST_PROXY: "1" }).trustProxy).toBe(true);
   });
 
   test("takes the address the proxy itself saw, not one the client wrote", () => {

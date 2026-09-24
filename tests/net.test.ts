@@ -279,6 +279,29 @@ describe("relay over the real host", () => {
     expect(response.status).toBe(400);
   });
 
+  test("a proxy that drops Host still lets the page's own origin in", async () => {
+    const proxied = startHost({
+      wwwroot: join(import.meta.dir, "fixtures/wwwroot"),
+      frameworkRoot,
+      port: 0,
+      hub: new RelayHub({ makeCode: () => "PRX123", makeKey: () => "key" }),
+      gate,
+      trustProxy: "proto",
+    });
+    try {
+      const socket = new WebSocket(`ws://127.0.0.1:${proxied.port}/relay?role=host`, {
+        headers: { ...headers, Origin: "https://stardew.example", "X-Forwarded-Host": "stardew.example" },
+      } as any);
+      const saw: any[] = [];
+      socket.onmessage = (event) => saw.push(JSON.parse(event.data as string));
+      await waitFor(() => saw.length > 0);
+      expect(saw[0].room).toBe("PRX123");
+      socket.close();
+    } finally {
+      await proxied.stop(true);
+    }
+  });
+
   test("is closed to anyone who has not verified, and to other sites", async () => {
     const upgrade = { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==" };
     const url = `http://127.0.0.1:${server.port}/relay?role=host`;

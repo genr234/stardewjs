@@ -46,10 +46,22 @@ export type HostOptions = HostRoots & {
   /**
    * Behind a reverse proxy, take the client address and scheme from
    * X-Forwarded-For / X-Forwarded-Proto. Never set this when the host is
-   * reachable directly: anyone could then claim any address.
+   * reachable directly: anyone could then claim any address. "proto" trusts
+   * only the scheme, for a proxy that passes the client's own X-Forwarded-For
+   * through unchecked (Hack Club Nest's does).
    */
-  trustProxy?: boolean;
+  trustProxy?: TrustProxy;
+  /**
+   * Mark the cookie Secure whatever the request says: for a front that only
+   * serves HTTPS but reports the hop behind it as http (Nest's Caddy does).
+   */
+  secureCookies?: boolean;
+  /** Requests per client per minute; behind a proxy that hides clients, a cap for the whole site. */
+  ownershipPerMinute?: number;
+  relayPerMinute?: number;
 };
+
+export type TrustProxy = boolean | "proto";
 
 /** Fixed one-minute windows per key; enough to blunt a script, not a botnet. */
 export class RateLimiter {
@@ -80,23 +92,32 @@ export class RateLimiter {
 type RequestContext = {
   client: string;
   secure: boolean;
+  /** The host the browser asked for, which an Origin must match. */
+  host: string;
 };
 
 export function requestContext(
   req: Request,
   server?: { requestIP(request: Request): { address: string } | null },
-  trustProxy = false,
+  trustProxy: TrustProxy = false,
 ): RequestContext {
   const url = new URL(req.url);
   let client = server?.requestIP(req)?.address ?? "unknown";
   let secure = url.protocol === "https:";
-  if (trustProxy) {
+  let host = req.headers.get("Host") ?? url.host;
+  if (trustProxy === true) {
     // The proxy appends the address it saw; the last entry is the one it vouches for.
     const forwarded = req.headers.get("X-Forwarded-For")?.split(",").at(-1)?.trim();
     if (forwarded) client = forwarded;
+  }
+  if (trustProxy) {
+    // A proxy may re-address the request (Nest's WebSocket proxy drops Host
+    // altogether); the host the browser used survives in X-Forwarded-Host.
+    const forwardedHost = req.headers.get("X-Forwarded-Host")?.split(",")[0]?.trim();
+    if (forwardedHost) host = forwardedHost;
     secure = req.headers.get("X-Forwarded-Proto")?.split(",")[0]?.trim() === "https" || secure;
   }
-  return { client, secure };
+  return { client, secure, host };
 }
 
 const LARGE_PATH = /(?:^|\/)(?:Content|Audio|_framework|_content)(?:\/|$)/i;
@@ -237,11 +258,11 @@ function cookieFor(gate: OwnershipGate, token: string | null, secure: boolean): 
 }
 
 /** A browser always sends Origin on POST and WebSocket; another site's must not be honoured. */
-function crossOrigin(req: Request): boolean {
+function crossOrigin(req: Request, host: string): boolean {
   const origin = req.headers.get("Origin");
   if (!origin) return false;
   try {
-    return new URL(origin).host !== (req.headers.get("Host") ?? new URL(req.url).host);
+    return new URL(origin).host !== host;
   } catch {
     return true;
   }
@@ -251,7 +272,7 @@ export async function handleOwnership(
   req: Request,
   url: URL,
   gate?: OwnershipGate,
-  context: RequestContext = { client: "unknown", secure: false },
+  context: RequestContext = requestContext(req),
   limiter?: RateLimiter,
 ): Promise<Response> {
   if (!gate) return json({ error: "This host has no reference copy of the game." }, 503);
@@ -262,7 +283,7 @@ export async function handleOwnership(
     return json({ verified: gate.verify(token, context.client) });
   }
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
-  if (crossOrigin(req)) return json({ error: "Forbidden" }, 403);
+  if (crossOrigin(req, context.host)) return json({ error: "Forbidden" }, 403);
   if (limiter && !limiter.allow(context.client)) {
     return json({ error: "Too many attempts. Wait a minute and try again." }, 429, { "Retry-After": "60" });
   }
@@ -376,8 +397,8 @@ export function startHost(options: HostOptions) {
   };
   const hub = options.hub ?? new RelayHub({ log: (message) => console.log(`[relay] ${message}`) });
   const trustProxy = options.trustProxy ?? false;
-  const ownershipLimiter = new RateLimiter(OWNERSHIP_REQUESTS_PER_MINUTE);
-  const relayLimiter = new RateLimiter(RELAY_UPGRADES_PER_MINUTE);
+  const ownershipLimiter = new RateLimiter(options.ownershipPerMinute ?? OWNERSHIP_REQUESTS_PER_MINUTE);
+  const relayLimiter = new RateLimiter(options.relayPerMinute ?? RELAY_UPGRADES_PER_MINUTE);
   return Bun.serve<RelaySocketData>({
     port: options.port ?? DEFAULT_PORT,
     hostname: options.hostname ?? "127.0.0.1",
@@ -386,10 +407,11 @@ export function startHost(options: HostOptions) {
     fetch(req, server): Response | Promise<Response> | undefined {
       const url = new URL(req.url);
       const context = requestContext(req, server, trustProxy);
+      if (options.secureCookies) context.secure = true;
       if (url.pathname === RELAY_PATH) {
         const request = parseRelayRequest(url);
         if (!request) return text("Bad Request", 400);
-        if (crossOrigin(req)) return text("Forbidden", 403);
+        if (crossOrigin(req, context.host)) return text("Forbidden", 403);
         // The relay carries whole farms between players, so it is for verified players too.
         if (!options.gate?.verify(readCookie(req.headers.get("Cookie"), COOKIE_NAME), context.client)) {
           return text("Verify your copy of the game first.", 403);
@@ -438,10 +460,29 @@ export async function openGate(repoRoot: string): Promise<OwnershipGate> {
 
 /**
  * HOST picks the interface (default loopback only). Set TRUST_PROXY=1 only
- * when HOST is loopback and a TLS proxy in front forwards to it.
+ * when a TLS proxy in front is the only way in and appends the real client
+ * address; TRUST_PROXY=proto when it sets the scheme but not the address.
+ * SECURE_COOKIES=1 when the front serves only HTTPS. OWNERSHIP_RATE /
+ * RELAY_RATE override the per-minute limits.
  */
-export function hostBinding(env: NodeJS.ProcessEnv = process.env): { hostname: string; trustProxy: boolean } {
-  return { hostname: env.HOST || "127.0.0.1", trustProxy: env.TRUST_PROXY === "1" };
+export function hostBinding(env: NodeJS.ProcessEnv = process.env): {
+  hostname: string;
+  trustProxy: TrustProxy;
+  secureCookies: boolean;
+  ownershipPerMinute?: number;
+  relayPerMinute?: number;
+} {
+  const rate = (value: string | undefined) => {
+    const parsed = Number(value);
+    return value && Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+  };
+  return {
+    hostname: env.HOST || "127.0.0.1",
+    trustProxy: env.TRUST_PROXY === "1" ? true : env.TRUST_PROXY === "proto" ? "proto" : false,
+    secureCookies: env.SECURE_COOKIES === "1",
+    ownershipPerMinute: rate(env.OWNERSHIP_RATE),
+    relayPerMinute: rate(env.RELAY_RATE),
+  };
 }
 
 export function parsePort(env: NodeJS.ProcessEnv = process.env): number {
@@ -471,7 +512,7 @@ if (import.meta.main) {
   const server = startHost({ wwwroot, frameworkRoot, port: parsePort(), gate, ...hostBinding() });
   console.log(`Serving ${wwwroot} (+ ${frameworkRoot}) at ${server.url}`);
   console.log(`Players verify against ${gate.referencePath}`);
-  if (process.env.TRUST_PROXY === "1" && !process.env.OWNERSHIP_KEY) {
+  if (process.env.TRUST_PROXY && !process.env.OWNERSHIP_KEY) {
     console.warn("OWNERSHIP_KEY is not set: players will have to verify again after every redeploy.");
   }
 }
