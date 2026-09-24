@@ -72,6 +72,72 @@
     return framed;
   }
 
+  // A proxy in front of the relay may cap WebSocket messages (Hack Club Nest's
+  // drops anything past 16 MB), and a farmhand joining a big farm is sent the
+  // whole world in one message. So each game message leads with a byte:
+  // WHOLE, or MORE / LAST for the pieces of one split at FRAGMENT_BYTES. The
+  // relay forwards the pieces as they are, in order, over one socket.
+  var WHOLE = 0;
+  var MORE = 1;
+  var LAST = 2;
+  var FRAGMENT_BYTES = 4 * 1024 * 1024;
+  // Past this a sender is refused rather than let it fill the tab's memory.
+  var MAX_MESSAGE_BYTES = 256 * 1024 * 1024;
+
+  function fragment(payload) {
+    if (payload.length <= FRAGMENT_BYTES) {
+      var whole = new Uint8Array(1 + payload.length);
+      whole[0] = WHOLE;
+      whole.set(payload, 1);
+      return [whole];
+    }
+    var pieces = [];
+    for (var at = 0; at < payload.length; at += FRAGMENT_BYTES) {
+      var end = Math.min(at + FRAGMENT_BYTES, payload.length);
+      var piece = new Uint8Array(1 + end - at);
+      piece[0] = end === payload.length ? LAST : MORE;
+      piece.set(payload.subarray(at, end), 1);
+      pieces.push(piece);
+    }
+    return pieces;
+  }
+
+  function Reassembler() {
+    this.parts = [];
+    this.size = 0;
+  }
+
+  // The finished message, or null while pieces are still arriving (or the
+  // input was malformed, which drops whatever was pending).
+  Reassembler.prototype.push = function (bytes) {
+    if (!bytes || bytes.length < 1) return this.reset();
+    var kind = bytes[0];
+    var body = bytes.subarray(1);
+    if (kind === WHOLE) {
+      if (this.parts.length) this.reset();
+      return body;
+    }
+    if (kind !== MORE && kind !== LAST) return this.reset();
+    this.size += body.length;
+    if (this.size > MAX_MESSAGE_BYTES) return this.reset();
+    this.parts.push(body);
+    if (kind === MORE) return null;
+    var joined = new Uint8Array(this.size);
+    var offset = 0;
+    for (var i = 0; i < this.parts.length; i++) {
+      joined.set(this.parts[i], offset);
+      offset += this.parts[i].length;
+    }
+    this.reset();
+    return joined;
+  };
+
+  Reassembler.prototype.reset = function () {
+    this.parts = [];
+    this.size = 0;
+    return null;
+  };
+
   function Endpoint() {
     this.socket = null;
     this.state = 'idle';   // idle | connecting | open | closed
@@ -130,6 +196,13 @@
     return true;
   };
 
+  // All the pieces of one message, or none of them.
+  Endpoint.prototype.sendAll = function (frames) {
+    if (!this.socket || this.socket.readyState !== 1) return false;
+    for (var i = 0; i < frames.length; i++) this.socket.send(frames[i]);
+    return true;
+  };
+
   Endpoint.prototype.drain = function () {
     var events = this.events;
     this.events = [];
@@ -141,17 +214,27 @@
   // The relay hands a host a key with its code; only that key gets the code
   // back after a drop, so nobody who merely heard it can take the room.
   var roomKeys = {};
+  // The host holds one partial message per peer; a client only ever hears the host.
+  var fromPeers = {};
+  var fromHost = new Reassembler();
+
+  function peerAssembler(peer) {
+    return fromPeers[peer] || (fromPeers[peer] = new Reassembler());
+  }
 
   var browserNet = {
     // Pass the previous room to keep an invite code that was already shared.
     hostStart: function (room) {
       host.close();
       host.room = null;
+      fromPeers = {};
       host.open(
         relayUrl('host', room || null, room ? roomKeys[room] : null),
         function (bytes) {
           var frame = readPeerFrame(bytes);
-          if (frame) host.events.push({ k: 'data', peer: frame.peer, b: toBase64(frame.payload) });
+          if (!frame) return;
+          var message = peerAssembler(frame.peer).push(frame.payload);
+          if (message) host.events.push({ k: 'data', peer: frame.peer, b: toBase64(message) });
         },
         function (message) {
           if (message.type === 'ready') {
@@ -159,7 +242,10 @@
             if (message.key) roomKeys[message.room] = message.key;
           }
           else if (message.type === 'connect') host.events.push({ k: 'connect', peer: message.peer });
-          else if (message.type === 'disconnect') host.events.push({ k: 'disconnect', peer: message.peer });
+          else if (message.type === 'disconnect') {
+            delete fromPeers[message.peer];
+            host.events.push({ k: 'disconnect', peer: message.peer });
+          }
           else if (message.type === 'error') host.error = message.reason;
         },
       );
@@ -174,7 +260,9 @@
     },
 
     hostSend: function (peer, base64) {
-      return host.send(writePeerFrame(peer, fromBase64(base64)));
+      var pieces = fragment(fromBase64(base64));
+      for (var i = 0; i < pieces.length; i++) pieces[i] = writePeerFrame(peer, pieces[i]);
+      return host.sendAll(pieces);
     },
 
     // Stands in for Lidgren discovery: the joining client reads the host's
@@ -188,10 +276,12 @@
     hostKick: function (peer) {
       if (!host.socket || host.socket.readyState !== 1) return false;
       host.socket.send(JSON.stringify({ type: 'kick', peer: peer }));
+      delete fromPeers[peer];
       return true;
     },
 
     hostStop: function () {
+      fromPeers = {};
       host.close('stopped');
       host.room = null;
     },
@@ -200,10 +290,12 @@
       client.close();
       client.room = room;
       client.lobby = {};
+      fromHost = new Reassembler();
       client.open(
         relayUrl('client', room),
         function (bytes) {
-          client.events.push(toBase64(bytes));
+          var message = fromHost.push(bytes);
+          if (message) client.events.push(toBase64(message));
         },
         function (message) {
           if (message.type === 'ready') {
@@ -230,7 +322,7 @@
     },
 
     clientSend: function (base64) {
-      return client.send(fromBase64(base64));
+      return client.sendAll(fragment(fromBase64(base64)));
     },
 
     clientClose: function () {

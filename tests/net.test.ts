@@ -140,8 +140,8 @@ describe("browser transport", () => {
     socket.control({ type: "ready", room: "ABC123" });
     socket.control({ type: "connect", peer: 1 });
 
-    // A relayed frame: peer 1, then the message body.
-    socket.deliver(new Uint8Array([1, 0, 0, 0, 42, 43]).buffer);
+    // A relayed frame: peer 1, then the message: WHOLE, then its body.
+    socket.deliver(new Uint8Array([1, 0, 0, 0, 0, 42, 43]).buffer);
     socket.control({ type: "disconnect", peer: 1 });
 
     const events = net.hostPoll();
@@ -158,7 +158,7 @@ describe("browser transport", () => {
     const socket = opened(0);
     socket.accept();
     expect(net.hostSend(3, base64([9, 9]))).toBe(true);
-    expect([...socket.frames()[0]!]).toEqual([3, 0, 0, 0, 9, 9]);
+    expect([...socket.frames()[0]!]).toEqual([3, 0, 0, 0, 0, 9, 9]);
   });
 
   test("refuses to send before the socket is up, rather than throwing into the game loop", () => {
@@ -207,10 +207,94 @@ describe("browser transport", () => {
     net.clientConnect("ABC123");
     const socket = opened(0);
     socket.accept();
-    const big = new Uint8Array(200_000).map((_, index) => index % 256);
+    const big = new Uint8Array(200_001).map((_, index) => (index === 0 ? 0 : index % 256));
     socket.deliver(big.buffer);
     const [body] = net.clientPoll();
     expect(bytesOf(body)).toHaveLength(200_000);
+  });
+
+  test("splits a message too big for a proxy's cap, and puts it back together", () => {
+    // Nest's proxy drops WebSocket messages past 16 MB; a big farm's world state is more.
+    const size = 10 * 1024 * 1024 + 7;
+    const payload = new Uint8Array(size).map((_, index) => (index * 7) % 256);
+
+    const net = loadNet();
+    net.hostStart(null);
+    const hostSocket = opened(0);
+    hostSocket.accept();
+    expect(net.hostSend(2, Buffer.from(payload).toString("base64"))).toBe(true);
+    const frames = hostSocket.frames();
+    expect(frames.length).toBe(3);
+    for (const frame of frames) {
+      expect(frame.length).toBeLessThanOrEqual(4 + 1 + 4 * 1024 * 1024);
+      expect([...frame.subarray(0, 4)]).toEqual([2, 0, 0, 0]);
+    }
+    expect(frames.map((frame) => frame[4])).toEqual([1, 1, 2]);
+
+    // The relay strips the peer id; the client sees the pieces in order.
+    const client = loadNet();
+    client.clientConnect("ABC123");
+    const clientSocket = opened(0);
+    clientSocket.accept();
+    for (const frame of frames.slice(0, 2)) clientSocket.deliver(frame.slice(4).buffer);
+    expect(client.clientPoll()).toEqual([]);
+    clientSocket.deliver(frames[2]!.slice(4).buffer);
+    const [joined] = client.clientPoll();
+    expect(Buffer.from(joined, "base64").equals(Buffer.from(payload))).toBe(true);
+  });
+
+  test("the client splits its messages too, and the host reassembles each peer apart", () => {
+    const net = loadNet();
+    net.clientConnect("ABC123");
+    const socket = opened(0);
+    socket.accept();
+    const payload = new Uint8Array(4 * 1024 * 1024 + 1).fill(5);
+    expect(net.clientSend(Buffer.from(payload).toString("base64"))).toBe(true);
+    const pieces = socket.frames();
+    expect(pieces.map((piece) => piece[0])).toEqual([1, 2]);
+
+    const host = loadNet();
+    host.hostStart(null);
+    const hostSocket = opened(0);
+    hostSocket.accept();
+    const tag = (peer: number, bytes: Uint8Array) => {
+      const framed = new Uint8Array(4 + bytes.length);
+      new DataView(framed.buffer).setUint32(0, peer, true);
+      framed.set(bytes, 4);
+      return framed.buffer;
+    };
+    // Peer 1's big message arrives interleaved with a small one from peer 2.
+    hostSocket.deliver(tag(1, pieces[0]!));
+    hostSocket.deliver(tag(2, new Uint8Array([0, 8])));
+    hostSocket.deliver(tag(1, pieces[1]!));
+    const events = host.hostPoll();
+    expect(events.map((event: any) => [event.peer, Buffer.from(event.b, "base64").length])).toEqual([
+      [2, 1],
+      [1, payload.length],
+    ]);
+  });
+
+  test("a peer that leaves mid-message leaves nothing half-built behind", () => {
+    const net = loadNet();
+    net.hostStart(null);
+    const socket = opened(0);
+    socket.accept();
+    socket.deliver(new Uint8Array([1, 0, 0, 0, 1, 7, 7]).buffer); // MORE
+    socket.control({ type: "disconnect", peer: 1 });
+    socket.deliver(new Uint8Array([1, 0, 0, 0, 2, 9]).buffer); // a new peer 1's LAST
+    const data = net.hostPoll().filter((event: any) => event.k === "data");
+    expect(data.map((event: any) => bytesOf(event.b))).toEqual([[9]]);
+  });
+
+  test("drops a malformed message instead of passing it to the game", () => {
+    const net = loadNet();
+    net.clientConnect("ABC123");
+    const socket = opened(0);
+    socket.accept();
+    socket.deliver(new Uint8Array([9, 1, 2]).buffer);
+    socket.deliver(new Uint8Array([]).buffer);
+    socket.deliver(new Uint8Array([0, 3]).buffer);
+    expect(net.clientPoll().map(bytesOf)).toEqual([[3]]);
   });
 });
 
