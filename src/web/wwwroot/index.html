@@ -104,35 +104,57 @@
       image-rendering: pixelated;
     }
 
-    /* The one thing on the screen that should be pressed. Filled in the accent
-       with a hard pixel shadow under it, so it reads as a key that goes down
-       when clicked; everything else on the title is quiet text. */
     .title-play {
-      display: block;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
       width: 100%;
       box-sizing: border-box;
-      padding: 12px;
-      border: 0;
-      background: var(--ui-accent);
-      box-shadow: 0 4px 0 color-mix(in srgb, var(--ui-accent) 55%, #000);
+      padding: 10px 12px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--ui-accent) 45%, #000);
+      border-radius: 6px;
+      background-color: var(--ui-accent);
+      box-shadow:
+        inset 0 1px color-mix(in srgb, var(--ui-accent-light) 70%, #fff),
+        0 4px 6px -1px rgba(0, 0, 0, 0.3),
+        0 2px 4px -2px rgba(0, 0, 0, 0.3);
       color: var(--ui-on-accent);
       font: inherit;
       font-weight: bold;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       cursor: pointer;
+      transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .title-play::before,
+    .settings-button::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), transparent);
+      pointer-events: none;
+    }
+
+    .title-play > span,
+    .settings-button > span {
+      position: relative;
     }
 
     .title-play:hover,
-    .title-play:focus-visible,
     .title-play:focus-within {
-      background: var(--ui-accent-light);
-      outline: none;
+      background-color: var(--ui-accent-light);
     }
 
     .title-play:active {
-      transform: translateY(3px);
-      box-shadow: 0 1px 0 color-mix(in srgb, var(--ui-accent) 55%, #000);
+      background-color: color-mix(in srgb, var(--ui-accent) 82%, #000);
+      box-shadow:
+        inset 0 1px color-mix(in srgb, var(--ui-accent) 70%, #000),
+        0 0 transparent;
     }
 
     .title-play:focus-visible,
@@ -196,16 +218,18 @@
       font-size: 12px;
     }
 
-    /* The secondary actions: a row of plain words under the play button, so
-       nothing competes with it for the eye. */
     .title-links {
       display: flex;
       justify-content: center;
       flex-wrap: wrap;
+      gap: 6px 24px;
       margin: 26px 0 0;
     }
 
     .title-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       padding: 4px 0;
       border: 0;
       background: none;
@@ -216,21 +240,14 @@
       cursor: pointer;
     }
 
-    .title-link + .title-link::before {
-      content: "\00b7";
-      display: inline-block;
-      padding: 0 12px;
-      color: var(--ui-muted);
-    }
-
     .title-link:hover,
     .title-link:focus-visible {
       color: var(--ui-fg);
       outline: none;
     }
 
-    .title-link:hover span,
-    .title-link:focus-visible span {
+    .title-link:hover span:not(.icon),
+    .title-link:focus-visible span:not(.icon) {
       text-decoration: underline;
       text-underline-offset: 3px;
     }
@@ -276,6 +293,9 @@
 
     .settings-tab,
     .settings-close {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       padding: 16px 10px 12px;
       border: 0;
       border-bottom: 2px solid transparent;
@@ -304,8 +324,6 @@
 
     .settings-close {
       margin-left: auto;
-      font-size: 16px;
-      letter-spacing: 0;
     }
 
     .settings-group {
@@ -358,20 +376,24 @@
       border: 1px solid rgba(0, 0, 0, 0.35);
     }
 
-    /* A tick rather than a second colour: on the paler themes the border alone
-       is easy to miss. */
+    .theme-swatch.is-chosen::before,
     .theme-swatch.is-chosen::after {
-      content: "\2713";
+      content: "";
       position: absolute;
-      top: 4px;
-      right: 4px;
-      width: 18px;
-      height: 18px;
+      top: 2px;
+      right: 2px;
+      width: 24px;
+      height: 24px;
+    }
+
+    .theme-swatch.is-chosen::before {
       background: var(--ui-accent);
-      color: var(--ui-on-accent);
-      font-size: 12px;
-      line-height: 18px;
-      text-align: center;
+    }
+
+    .theme-swatch.is-chosen::after {
+      background-color: var(--ui-on-accent);
+      -webkit-mask: url(icons/check.svg) center / contain no-repeat;
+      mask: url(icons/check.svg) center / contain no-repeat;
     }
 
     .settings-heading {
@@ -448,8 +470,6 @@
       outline: none;
     }
 
-    /* The saves panel's status line - the one piece of prose left in the menu,
-       because it reports what just happened rather than explaining a control. */
     .settings-note {
       margin: 10px 0 0;
       color: var(--ui-muted);
@@ -468,27 +488,48 @@
 
     .settings-button {
       position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
       flex: 1 1 10rem;
       box-sizing: border-box;
       margin: 4px 0 0;
-      padding: 8px 10px;
-      border: 2px solid var(--ui-line);
-      background: var(--ui-sunken);
+      padding: 7px 12px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--ui-bg) 62%, #000);
+      border-radius: 6px;
+      background-color: color-mix(in srgb, var(--ui-fg) 10%, var(--ui-bg));
+      box-shadow:
+        inset 0 1px color-mix(in srgb, var(--ui-bg) 60%, #fff),
+        0 4px 6px -1px rgba(0, 0, 0, 0.2),
+        0 2px 4px -2px rgba(0, 0, 0, 0.2);
       color: var(--ui-fg);
       font: inherit;
       text-align: center;
       letter-spacing: 0.08em;
       text-transform: uppercase;
       cursor: pointer;
+      transition: background-color 150ms cubic-bezier(0.4, 0, 0.2, 1),
+        box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     .settings-button:hover,
-    .settings-button:focus-visible,
     .settings-button:focus-within {
-      border-color: var(--ui-fg);
-      background: var(--ui-fg);
-      color: var(--ui-on-accent);
-      outline: none;
+      background-color: color-mix(in srgb, var(--ui-fg) 18%, var(--ui-bg));
+    }
+
+    .settings-button:active {
+      background-color: color-mix(in srgb, var(--ui-bg) 88%, #000);
+      box-shadow:
+        inset 0 1px color-mix(in srgb, var(--ui-bg) 80%, #000),
+        0 0 transparent;
+    }
+
+    .settings-button:focus-visible,
+    .settings-button:has(:focus-visible) {
+      outline: 2px solid var(--ui-accent);
+      outline-offset: 2px;
     }
 
     .settings-button[disabled],
@@ -500,6 +541,39 @@
     .settings-reset {
       margin-top: 2px;
     }
+
+    /* Pixelarticons (icons/LICENSE), masks over currentColor. Sizes stay on
+       their 24px grid so pixels land whole. */
+    .icon {
+      flex: none;
+      display: inline-block;
+      width: 24px;
+      height: 24px;
+      background-color: currentColor;
+      -webkit-mask: var(--icon) center / contain no-repeat;
+      mask: var(--icon) center / contain no-repeat;
+    }
+
+    .title-link .icon,
+    .settings-tab .icon {
+      width: 18px;
+      height: 18px;
+    }
+
+    .icon-play { --icon: url(icons/play.svg); }
+    .icon-folder { --icon: url(icons/folder.svg); }
+    .icon-settings-cog { --icon: url(icons/settings-cog.svg); }
+    .icon-logout { --icon: url(icons/logout.svg); }
+    .icon-colors-swatch { --icon: url(icons/colors-swatch.svg); }
+    .icon-volume-3 { --icon: url(icons/volume-3.svg); }
+    .icon-gamepad { --icon: url(icons/gamepad.svg); }
+    .icon-save { --icon: url(icons/save.svg); }
+    .icon-close { --icon: url(icons/close.svg); }
+    .icon-download { --icon: url(icons/download.svg); }
+    .icon-upload { --icon: url(icons/upload.svg); }
+    .icon-expand { --icon: url(icons/expand.svg); }
+    .icon-reload { --icon: url(icons/reload.svg); }
+    .icon-undo { --icon: url(icons/undo.svg); }
 
     #boot {
       position: fixed;
@@ -647,6 +721,7 @@
       <template x-if="$store.ownership.ready && !$store.ownership.unlocked">
         <div x-data="{ help: false }">
           <label class="title-play" :class="$store.ownership.checking ? 'is-busy' : null">
+            <span class="icon icon-folder" aria-hidden="true"></span>
             <span x-text="$store.ownership.checking ? 'checking your copy' : 'Choose Stardew Valley.dll'">Choose Stardew Valley.dll</span>
             <input class="title-file" type="file" :disabled="$store.ownership.checking"
               @change="$store.ownership.submit($event)" />
@@ -662,27 +737,30 @@
       </template>
       <template x-if="$store.ownership.ready && $store.ownership.unlocked">
         <div>
-          <button class="title-play" type="button" @click="$store.title.play()">Play</button>
+          <button class="title-play" type="button" @click="$store.title.play()"><span class="icon icon-play" aria-hidden="true"></span><span>Play</span></button>
           <p class="title-detail"><span x-text="$store.ownership.detail"></span> &middot; saves stay in this
             browser</p>
         </div>
       </template>
       <nav class="title-links">
-        <button class="title-link" type="button" @click="$store.settings.open()"><span>settings</span></button>
+        <button class="title-link" type="button" @click="$store.settings.open()"><span class="icon icon-settings-cog" aria-hidden="true"></span><span>settings</span></button>
         <button class="title-link" type="button" x-show="$store.ownership.unlocked"
-          @click="$store.ownership.forget()"><span>forget my copy</span></button>
+          @click="$store.ownership.forget()"><span class="icon icon-logout" aria-hidden="true"></span><span>forget
+            my copy</span></button>
       </nav>
     </div>
 
     <div class="settings-panel" x-show="$store.settings.visible" x-init="$store.saves.refresh()"
       x-data="{ tab: 'look' }" role="dialog" aria-label="Settings">
       <div class="settings-tabs" role="tablist">
-        <template x-for="[id, name] in [['look', 'Look'], ['sound', 'Sound'], ['game', 'Game'], ['saves', 'Saves']]" :key="id">
-          <button class="settings-tab" type="button" role="tab" :aria-selected="tab === id"
-            @click="tab = id" x-text="name"></button>
+        <template x-for="[id, name, icon] in [['look', 'Look', 'colors-swatch'], ['sound', 'Sound', 'volume-3'],
+          ['game', 'Game', 'gamepad'], ['saves', 'Saves', 'save']]" :key="id">
+          <button class="settings-tab" type="button" role="tab" :aria-selected="tab === id" @click="tab = id">
+            <span class="icon" :class="'icon-' + icon" aria-hidden="true"></span><span x-text="name"></span>
+          </button>
         </template>
         <button class="settings-close" type="button" aria-label="Close settings"
-          @click="$store.settings.close()">&#x2715;</button>
+          @click="$store.settings.close()"><span class="icon icon-close" aria-hidden="true"></span></button>
       </div>
 
       <div role="tabpanel" x-show="tab === 'look'">
@@ -711,7 +789,8 @@
               @change="$store.settings.set('display.crisp', $event.target.checked)" />
             <span class="settings-label">keep the pixels crisp</span>
           </label>
-          <button class="settings-button" type="button" @click="toggleFullscreen()">Toggle fullscreen</button>
+          <button class="settings-button" type="button" @click="toggleFullscreen()"><span class="icon icon-expand" aria-hidden="true"></span><span>Toggle
+              fullscreen</span></button>
         </section>
       </div>
 
@@ -807,9 +886,10 @@
           <h3 class="settings-heading">Saves</h3>
           <div class="settings-actions">
             <button class="settings-button" type="button" :disabled="$store.saves.busy"
-              @click="$store.saves.runExport()">Export to a file</button>
+              @click="$store.saves.runExport()"><span class="icon icon-download" aria-hidden="true"></span><span>Export to a
+                file</span></button>
             <label class="settings-button" :class="$store.saves.busy ? 'is-busy' : null">
-              <span>Load from a file</span>
+              <span class="icon icon-upload" aria-hidden="true"></span><span>Load from a file</span>
               <input class="title-file" type="file" accept="application/json,.json"
                 :disabled="$store.saves.busy" @change="$store.saves.runImport($event)" />
             </label>
@@ -821,7 +901,7 @@
         <section class="settings-group">
           <h3 class="settings-heading">Defaults</h3>
           <button class="title-link settings-reset" type="button"
-            @click="$store.settings.forget(); $store.saves.refresh()"><span>reset every setting to its
+            @click="$store.settings.forget(); $store.saves.refresh()"><span class="icon icon-undo" aria-hidden="true"></span><span>reset every setting to its
               default</span></button>
         </section>
       </div>
@@ -844,7 +924,8 @@
     <div class="title-panel">
       <h1 class="title-name"><img class="title-logo" src="chicken-js.png" alt="Stardew Valley" /></h1>
       <p class="boot-status" x-text="$store.exit.status"></p>
-      <button class="title-play" type="button" x-show="$store.exit.done" @click="$store.exit.again()">Play again</button>
+      <button class="title-play" type="button" x-show="$store.exit.done" @click="$store.exit.again()"><span class="icon icon-reload" aria-hidden="true"></span><span>Play
+          again</span></button>
       <p class="title-detail" x-text="$store.exit.detail"></p>
     </div>
   </div>
