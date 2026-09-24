@@ -101,9 +101,20 @@ export function requestContext(
 
 const LARGE_PATH = /(?:^|\/)(?:Content|Audio|_framework|_content)(?:\/|$)/i;
 
-// App files must not be cached: importScripts would keep running a stale
-// js/*.js. Bulk assets are immutable.
-const IMMUTABLE_PATH = /(?:^|\/)(?:Content|_framework|_content)(?:\/|$)|\.opus$/i;
+// App files must be revalidated: importScripts would keep running a stale
+// js/*.js.
+const GAME_ASSET_PATH = /(?:^|\/)(?:Content|Audio)(?:\/|$)|\.opus$/i;
+
+// The game's own assets change only when the host moves to another game
+// version, so a player keeps them a week (a token's life) before asking again.
+// Everything else - the app and the _framework build - is asked about every
+// time; Blazor checks _framework against blazor.boot.json, so a stale
+// assembly would fail to load rather than merely be old. Either way the
+// question is a conditional request, answered with a 304 and no body.
+// `private`: these files sit behind the ownership check, so no shared cache
+// in front of the host may keep a copy and hand it to someone who hasn't passed.
+const GAME_ASSET_CACHE = "private, max-age=604800";
+const REVALIDATE_CACHE = "private, no-cache";
 
 export function findFrameworkRoot(webProjectDir: string): string | null {
   const bin = join(webProjectDir, "bin");
@@ -326,11 +337,30 @@ export async function handleRequest(
   const file = Bun.file(filePath);
   const headers = new Headers(SECURITY_HEADERS);
   headers.set("Content-Type", contentTypeFor(filePath, file.type));
-  if (!IMMUTABLE_PATH.test(url.pathname)) {
-    // No validator is sent, so this means re-fetch; these files are small.
-    headers.set("Cache-Control", "no-cache");
+  headers.set("Cache-Control", GAME_ASSET_PATH.test(url.pathname) ? GAME_ASSET_CACHE : REVALIDATE_CACHE);
+  // Bun sends no validator for a file, so without this every revalidation
+  // would download the whole file again.
+  const etag = await entityTag(filePath);
+  if (etag) {
+    headers.set("ETag", etag);
+    if (matchesEntityTag(req.headers.get("If-None-Match"), etag)) {
+      return new Response(null, { status: 304, headers });
+    }
   }
   return new Response(file, { headers });
+}
+
+/** Weak, from size and modification time: cheap, and changes whenever the file is replaced. */
+async function entityTag(path: string): Promise<string | null> {
+  const info = await Bun.file(path).stat().catch(() => null);
+  if (!info) return null;
+  return `W/"${info.size.toString(16)}-${Math.floor(info.mtimeMs).toString(16)}"`;
+}
+
+export function matchesEntityTag(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  const opaque = (tag: string) => tag.trim().replace(/^W\//, "");
+  return header.split(",").some((tag) => tag.trim() === "*" || opaque(tag) === opaque(etag));
 }
 
 type RelaySocketData = {

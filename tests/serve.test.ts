@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { COOKIE_NAME, OwnershipGate } from "../scripts/ownership.ts";
-import { ISOLATION_HEADERS, isGatedPath, RateLimiter, requestContext, SECURITY_HEADERS, startHost } from "../scripts/serve.ts";
+import { ISOLATION_HEADERS, isGatedPath, matchesEntityTag, RateLimiter, requestContext, SECURITY_HEADERS, startHost } from "../scripts/serve.ts";
 
 const wwwroot = join(import.meta.dir, "fixtures/wwwroot");
 const frameworkRoot = join(import.meta.dir, "fixtures/framework");
@@ -70,19 +70,42 @@ describe("static host", () => {
     expect(missing.status).toBe(404);
   });
 
-  test("the app's own files are served without caching, the bulk assets are not", async () => {
+  test("the app and the build are revalidated every time, the game's assets kept a week", async () => {
     // A worker kept running a cached js/audio.js across an edit, which looked
     // like a missing function rather than a stale file.
-    for (const path of ["/", "/index.html", "/js/host.js"]) {
+    for (const path of ["/", "/index.html", "/js/host.js", "/_framework/dotnet.native.wasm"]) {
       const res = await get(path);
-      expect(res.headers.get("Cache-Control")).toBe("no-cache");
+      expect(`${path}: ${res.headers.get("Cache-Control")}`).toBe(`${path}: private, no-cache`);
     }
-    // The 544 MB of assets keep whatever caching the browser would give them.
     for (const path of ["/Content/Maps/Town.xnb", "/Audio/main/0005.opus"]) {
       const res = await get(path);
       expect(res.status).toBe(200);
-      expect(res.headers.get("Cache-Control")).toBeNull();
+      expect(res.headers.get("Cache-Control")).toBe("private, max-age=604800");
     }
+  });
+
+  test("a revalidation of an unchanged file is a 304 with no body", async () => {
+    for (const path of ["/js/host.js", "/Content/Maps/Town.xnb"]) {
+      const first = await get(path);
+      const etag = first.headers.get("ETag");
+      expect(etag).toMatch(/^W\/"[0-9a-f]+-[0-9a-f]+"$/);
+      const again = await server.fetch(
+        new Request("http://localhost" + path, { headers: { Cookie: cookie, "If-None-Match": etag! } }),
+      );
+      expect(again.status).toBe(304);
+      expect(await again.text()).toBe("");
+      expect(again.headers.get("Cache-Control")).toBe(first.headers.get("Cache-Control"));
+      const stale = await server.fetch(
+        new Request("http://localhost" + path, { headers: { Cookie: cookie, "If-None-Match": 'W/"0-0"' } }),
+      );
+      expect(stale.status).toBe(200);
+    }
+  });
+
+  test("a revalidation still has to pass the ownership check", async () => {
+    const etag = (await get("/Content/Maps/Town.xnb")).headers.get("ETag")!;
+    const res = await server.fetch(new Request("http://localhost/Content/Maps/Town.xnb", { headers: { "If-None-Match": etag } }));
+    expect(res.status).toBe(403);
   });
 
   test("sends the hardening headers on every response", async () => {
@@ -174,5 +197,17 @@ describe("rate limiter", () => {
     expect(limiter.allow("b")).toBe(true);
     clock += 60_000;
     expect(limiter.allow("a")).toBe(true);
+  });
+});
+
+describe("entity tags", () => {
+  test("match weakly, in lists, and on a wildcard", () => {
+    const tag = 'W/"a-b"';
+    expect(matchesEntityTag(tag, tag)).toBe(true);
+    expect(matchesEntityTag('"a-b"', tag)).toBe(true);
+    expect(matchesEntityTag('W/"x", W/"a-b"', tag)).toBe(true);
+    expect(matchesEntityTag("*", tag)).toBe(true);
+    expect(matchesEntityTag('W/"a-c"', tag)).toBe(false);
+    expect(matchesEntityTag(null, tag)).toBe(false);
   });
 });
