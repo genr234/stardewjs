@@ -828,20 +828,40 @@
       margin: 0 0 12px;
     }
 
+    /* The puzzle sits in the same sunken frame as the progress bar. */
     #boot-jigsaw {
       display: block;
-      width: min(280px, 70vw);
+      box-sizing: content-box;
+      width: min(270px, 70vw);
       height: auto;
       aspect-ratio: 1;
-      margin: 0 auto 16px;
+      margin: 0 auto;
+      padding: 2px;
+      border: 2px solid var(--ui-fg);
       touch-action: none;
-      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
       image-rendering: pixelated;
       background: var(--ui-sunken);
+      box-shadow: 4px 4px 0 color-mix(in srgb, var(--ui-sunken) 60%, transparent);
     }
 
-    #boot-jigsaw:active {
-      cursor: grabbing;
+    #boot-jigsaw:focus {
+      outline: none;
+    }
+
+    #boot-jigsaw:focus-visible {
+      outline: 2px solid var(--ui-accent);
+      outline-offset: 2px;
+    }
+
+    .boot-jigsaw-note {
+      min-height: 1.4em;
+      margin: 8px 0 14px;
+      color: var(--ui-muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
     }
 
     .boot-bar {
@@ -1149,6 +1169,7 @@
     <div class="boot-panel" x-show="!$store.boot.failed">
       <p class="boot-status" id="boot-status" x-text="$store.boot.status">loading the .NET runtime</p>
       <canvas id="boot-jigsaw" width="270" height="270"></canvas>
+      <p class="boot-jigsaw-note" id="boot-jigsaw-note" aria-live="polite">drag a tile onto another to swap them</p>
       <div class="boot-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
         :aria-valuenow="$store.boot.percent" aria-labelledby="boot-status">
         <div class="boot-bar-fill" :style="{ width: $store.boot.percent + '%' }"></div>
