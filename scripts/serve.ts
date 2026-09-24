@@ -428,7 +428,10 @@ export const DEFAULT_SECRET = ".ownership-key";
 export async function openGate(repoRoot: string): Promise<OwnershipGate> {
   const referencePath = process.env.OWNERSHIP_REFERENCE ?? join(repoRoot, DEFAULT_REFERENCE);
   const secretPath = process.env.OWNERSHIP_SECRET ?? join(repoRoot, DEFAULT_SECRET);
-  const gate = new OwnershipGate({ referencePath, secretPath });
+  // In a container the key comes from the environment, so a redeploy doesn't
+  // log every player out. Make one with `openssl rand -hex 32`.
+  const secretHex = process.env.OWNERSHIP_KEY?.trim() || undefined;
+  const gate = new OwnershipGate({ referencePath, secretPath, secretHex });
   await gate.referenceSize();
   return gate;
 }
@@ -468,4 +471,7 @@ if (import.meta.main) {
   const server = startHost({ wwwroot, frameworkRoot, port: parsePort(), gate, ...hostBinding() });
   console.log(`Serving ${wwwroot} (+ ${frameworkRoot}) at ${server.url}`);
   console.log(`Players verify against ${gate.referencePath}`);
+  if (process.env.TRUST_PROXY === "1" && !process.env.OWNERSHIP_KEY) {
+    console.warn("OWNERSHIP_KEY is not set: players will have to verify again after every redeploy.");
+  }
 }

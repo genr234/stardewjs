@@ -8,6 +8,7 @@
     "test:watch": "bun test --watch",
     "serve": "bun scripts/serve.ts",
     "web": "bun scripts/web.ts",
+    "stage": "bun scripts/stage.ts",
     "decompile": "bun scripts/decompile.ts",
     "extract-audio": "bun tools/audio/extract_wavebank.ts"
   },

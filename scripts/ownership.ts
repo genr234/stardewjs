@@ -22,6 +22,8 @@ export type GateOptions = {
   tokenTtlMs?: number;
   /** Persisting the key lets tokens survive restarts. */
   secretPath?: string;
+  /** The key itself, as 64 hex digits; wins over secretPath. For hosts with no writable disk. */
+  secretHex?: string;
   /** Challenges outstanding at once; past this the host asks players to retry. */
   maxPending?: number;
   /** A token seen from more addresses than this within shareWindowMs is revoked. */
@@ -133,7 +135,12 @@ export class OwnershipGate {
     this.maxPending = options.maxPending ?? MAX_PENDING;
     this.maxClientsPerToken = options.maxClientsPerToken ?? MAX_CLIENTS_PER_TOKEN;
     this.shareWindowMs = options.shareWindowMs ?? SHARE_WINDOW_MS;
-    this.secret = options.secretPath ? loadSecret(options.secretPath) : cryptoRandomBytes(32);
+    if (options.secretHex !== undefined) {
+      if (!/^[0-9a-f]{64}$/i.test(options.secretHex)) throw new Error("The ownership key must be 64 hex digits.");
+      this.secret = Buffer.from(options.secretHex, "hex");
+    } else {
+      this.secret = options.secretPath ? loadSecret(options.secretPath) : cryptoRandomBytes(32);
+    }
   }
 
   async referenceSize(): Promise<number> {
