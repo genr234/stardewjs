@@ -16,3 +16,7 @@ node_modules/
 # Local symlink to the vendored game content, created by the web build.
 src/web/wwwroot/Content
 src/web/wwwroot/Audio
+
+docs/
+README.md
+.claude/
