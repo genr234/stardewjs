@@ -4,7 +4,7 @@
 (function (root) {
   var RELAY_PATH = '/relay';
 
-  function relayUrl(role, room) {
+  function relayUrl(role, room, key) {
     // In a worker, location is the script's URL, so its origin is the relay's
     // host. The settings menu can name another relay.
     var base = typeof root.__relayUrl === 'string' ? root.__relayUrl.trim() : '';
@@ -21,6 +21,7 @@
     }
     url += '?role=' + role;
     if (room) url += '&room=' + encodeURIComponent(room);
+    if (key) url += '&key=' + encodeURIComponent(key);
     return url;
   }
 
@@ -137,6 +138,9 @@
 
   var host = new Endpoint();
   var client = new Endpoint();
+  // The relay hands a host a key with its code; only that key gets the code
+  // back after a drop, so nobody who merely heard it can take the room.
+  var roomKeys = {};
 
   var browserNet = {
     // Pass the previous room to keep an invite code that was already shared.
@@ -144,13 +148,16 @@
       host.close();
       host.room = null;
       host.open(
-        relayUrl('host', room || null),
+        relayUrl('host', room || null, room ? roomKeys[room] : null),
         function (bytes) {
           var frame = readPeerFrame(bytes);
           if (frame) host.events.push({ k: 'data', peer: frame.peer, b: toBase64(frame.payload) });
         },
         function (message) {
-          if (message.type === 'ready') host.room = message.room;
+          if (message.type === 'ready') {
+            host.room = message.room;
+            if (message.key) roomKeys[message.room] = message.key;
+          }
           else if (message.type === 'connect') host.events.push({ k: 'connect', peer: message.peer });
           else if (message.type === 'disconnect') host.events.push({ k: 'disconnect', peer: message.peer });
           else if (message.type === 'error') host.error = message.reason;

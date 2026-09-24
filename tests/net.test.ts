@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 
+import { COOKIE_NAME, OwnershipGate } from "../scripts/ownership.ts";
 import { RelayHub } from "../scripts/relay.ts";
 import { startHost } from "../scripts/serve.ts";
 
@@ -121,6 +122,16 @@ describe("browser transport", () => {
     expect(net.hostState()).toMatchObject({ state: "open", room: "ABC123" });
   });
 
+  test("reclaims its room with the key the relay handed it", () => {
+    const net = loadNet();
+    net.hostStart(null);
+    opened(0).accept();
+    opened(0).control({ type: "ready", room: "ABC123", key: "secret" });
+
+    net.hostStart("ABC123");
+    expect(opened(1).url).toBe("ws://localhost:5199/relay?role=host&room=ABC123&key=secret");
+  });
+
   test("queues arrivals, departures and messages for the next tick", () => {
     const net = loadNet();
     net.hostStart(null);
@@ -205,15 +216,20 @@ describe("browser transport", () => {
 
 describe("relay over the real host", () => {
   let server: ReturnType<typeof startHost>;
-  const hub = new RelayHub({ makeCode: () => "ABC123" });
+  const hub = new RelayHub({ makeCode: () => "ABC123", makeKey: () => "key" });
+  const frameworkRoot = join(import.meta.dir, "fixtures/framework");
+  const gate = new OwnershipGate({ referencePath: join(frameworkRoot, "_framework/dotnet.native.wasm") });
+  let headers: Record<string, string>;
 
   beforeAll(() => {
     server = startHost({
       wwwroot: join(import.meta.dir, "fixtures/wwwroot"),
-      frameworkRoot: join(import.meta.dir, "fixtures/framework"),
+      frameworkRoot,
       port: 0,
       hub,
+      gate,
     });
+    headers = { Cookie: `${COOKIE_NAME}=${gate.grant()}` };
   });
 
   afterAll(async () => {
@@ -222,7 +238,7 @@ describe("relay over the real host", () => {
 
   test("carries a message from a joined client to the host and back", async () => {
     const base = `ws://127.0.0.1:${server.port}/relay`;
-    const host = new WebSocket(`${base}?role=host`);
+    const host = new WebSocket(`${base}?role=host`, { headers } as any);
     const hostSaw: any[] = [];
     const hostBinary: Uint8Array[] = [];
     host.binaryType = "arraybuffer";
@@ -232,9 +248,9 @@ describe("relay over the real host", () => {
     };
     await new Promise((resolve) => (host.onopen = resolve));
     await waitFor(() => hostSaw.length > 0);
-    expect(hostSaw[0]).toEqual({ type: "ready", room: "ABC123" });
+    expect(hostSaw[0]).toEqual({ type: "ready", room: "ABC123", key: "key" });
 
-    const client = new WebSocket(`${base}?role=client&room=ABC123`);
+    const client = new WebSocket(`${base}?role=client&room=ABC123`, { headers } as any);
     const clientBinary: Uint8Array[] = [];
     client.binaryType = "arraybuffer";
     client.onmessage = (event) => {
@@ -261,6 +277,14 @@ describe("relay over the real host", () => {
   test("rejects an upgrade with no role", async () => {
     const response = await fetch(`http://127.0.0.1:${server.port}/relay`);
     expect(response.status).toBe(400);
+  });
+
+  test("is closed to anyone who has not verified, and to other sites", async () => {
+    const upgrade = { Connection: "Upgrade", Upgrade: "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==" };
+    const url = `http://127.0.0.1:${server.port}/relay?role=host`;
+    expect((await fetch(url, { headers: upgrade })).status).toBe(403);
+    const elsewhere = await fetch(url, { headers: { ...upgrade, ...headers, Origin: "https://evil.example" } });
+    expect(elsewhere.status).toBe(403);
   });
 });
 

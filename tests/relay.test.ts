@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { decodeFrame, encodeFrame, parseRelayRequest, RelayHub } from "../scripts/relay.ts";
+import { decodeFrame, defaultCodeGenerator, encodeFrame, parseRelayRequest, RelayHub } from "../scripts/relay.ts";
 
 type Sent = string | Uint8Array;
 
@@ -28,7 +28,7 @@ function socket() {
 
 function hubWithCodes(...codes: string[]) {
   let index = 0;
-  return new RelayHub({ makeCode: () => codes[index++] ?? `X${index}` });
+  return new RelayHub({ makeCode: () => codes[index++] ?? `X${index}`, makeKey: () => `key-${index}` });
 }
 
 describe("relay framing", () => {
@@ -51,7 +51,7 @@ describe("relay rooms", () => {
     const client = socket();
 
     hub.open(host, "host", null);
-    expect(host.control()[0]).toEqual({ type: "ready", room: "ABC123" });
+    expect(host.control()[0]).toEqual({ type: "ready", room: "ABC123", key: "key-1" });
 
     hub.open(client, "client", "abc123"); // codes are typed by hand, so case-insensitive
     expect(client.control()[0].room).toBe("ABC123");
@@ -130,9 +130,81 @@ describe("relay rooms", () => {
     hub.close(first);
 
     const second = socket();
-    hub.open(second, "host", "ABC123");
-    expect(second.control()[0]).toEqual({ type: "ready", room: "ABC123" });
+    hub.open(second, "host", "ABC123", "key-1");
+    expect(second.control()[0]).toEqual({ type: "ready", room: "ABC123", key: "key-1" });
     expect(hub.roomCount).toBe(1);
+  });
+
+  test("hearing a code is not enough to take the room over", () => {
+    const hub = hubWithCodes("ABC123", "ZZZ999", "YYY888");
+    const host = socket();
+    const client = socket();
+    hub.open(host, "host", null);
+    hub.open(client, "client", "ABC123");
+
+    for (const key of [undefined, "guess"]) {
+      const intruder = socket();
+      hub.open(intruder, "host", "ABC123", key);
+      expect(intruder.control()[0].room).not.toBe("ABC123");
+    }
+    expect(host.closed).toHaveLength(0);
+    expect(client.closed).toHaveLength(0);
+    hub.message(client, new Uint8Array([1]));
+    expect(host.binary()).toHaveLength(1);
+  });
+
+  test("a dropped host's code is held for it, then released", () => {
+    let clock = 0;
+    let index = 0;
+    const codes = ["ABC123", "ZZZ999"];
+    const hub = new RelayHub({ makeCode: () => codes[index++] ?? `X${index}`, now: () => clock });
+    const first = socket();
+    hub.open(first, "host", null);
+    hub.close(first);
+
+    const squatter = socket();
+    hub.open(squatter, "host", "ABC123");
+    expect(squatter.control()[0].room).toBe("ZZZ999");
+    hub.close(squatter);
+
+    clock += 31 * 60 * 1000;
+    const later = socket();
+    hub.open(later, "host", "ABC123");
+    expect(later.control()[0].room).toBe("ABC123");
+  });
+
+  test("a full relay turns new hosts away, a full room new clients", () => {
+    const hub = new RelayHub({ makeCode: () => "ABC123", maxRooms: 1, maxPeersPerRoom: 1 });
+    const host = socket();
+    hub.open(host, "host", null);
+    const another = socket();
+    hub.open(another, "host", null);
+    expect(another.control()[0]).toEqual({ type: "error", reason: "relay-full" });
+    expect(another.closed).toHaveLength(1);
+
+    const first = socket();
+    const second = socket();
+    hub.open(first, "client", "ABC123");
+    hub.open(second, "client", "ABC123");
+    expect(first.closed).toHaveLength(0);
+    expect(second.control()[0]).toEqual({ type: "error", reason: "room-full" });
+  });
+
+  test("lobby data is bounded", () => {
+    const hub = hubWithCodes("ABC123");
+    const host = socket();
+    hub.open(host, "host", null);
+    const data: Record<string, string> = { huge: "x".repeat(10_000), ["k".repeat(100)]: "v" };
+    for (let i = 0; i < 100; i++) data[`key${i}`] = String(i);
+    hub.message(host, JSON.stringify({ type: "lobby", data }));
+    const lobby = hub.getRoom("ABC123")!.lobby;
+    expect(Object.keys(lobby)).toHaveLength(32);
+    expect(lobby.huge).toBeUndefined();
+  });
+
+  test("generated codes come from the typed alphabet", () => {
+    const make = defaultCodeGenerator();
+    for (let i = 0; i < 200; i++) expect(make()).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
   });
 
   test("a client cannot publish lobby data or kick anyone", () => {
@@ -164,6 +236,11 @@ describe("relay requests", () => {
     expect(parseRelayRequest(new URL("ws://x/relay?role=client&room=ABC123"))).toEqual({
       role: "client",
       room: "ABC123",
+    });
+    expect(parseRelayRequest(new URL("ws://x/relay?role=host&room=ABC123&key=k"))).toEqual({
+      role: "host",
+      room: "ABC123",
+      key: "k",
     });
     expect(parseRelayRequest(new URL("ws://x/relay"))).toBeNull();
     expect(parseRelayRequest(new URL("ws://x/relay?role=admin"))).toBeNull();

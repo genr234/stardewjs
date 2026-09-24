@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 
-import { COOKIE_NAME, GATED_PATH, OwnershipGate, readCookie } from "./ownership.ts";
+import { COOKIE_NAME, GateBusyError, GATED_PATH, OwnershipGate, readCookie } from "./ownership.ts";
 import { parseRelayRequest, RelayHub, type RelaySocket } from "./relay.ts";
 
 export const DEFAULT_PORT = 5199;
@@ -15,6 +15,23 @@ export const ISOLATION_HEADERS = {
   "Cross-Origin-Embedder-Policy": "require-corp",
 } as const;
 
+/** Sent with every response, beside the isolation headers. */
+export const SECURITY_HEADERS = {
+  ...ISOLATION_HEADERS,
+  // Other sites may not embed the game's files or frame the page.
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+} as const;
+
+/** Requests per client per minute; asset requests are not limited, a boot makes hundreds. */
+const OWNERSHIP_REQUESTS_PER_MINUTE = 20;
+const RELAY_UPGRADES_PER_MINUTE = 30;
+
+// Only the ownership answer has a body, and it is two hex strings.
+const MAX_REQUEST_BODY_BYTES = 16 * 1024;
+
 export type HostRoots = {
   wwwroot: string;
   frameworkRoot: string;
@@ -24,9 +41,63 @@ export type HostOptions = HostRoots & {
   port?: number;
   hostname?: string;
   hub?: RelayHub;
-  /** Without one, nothing under Content/Audio/_framework is served. */
+  /** Without one, nothing under Content/Audio/_framework is served, and the relay is closed. */
   gate?: OwnershipGate;
+  /**
+   * Behind a reverse proxy, take the client address and scheme from
+   * X-Forwarded-For / X-Forwarded-Proto. Never set this when the host is
+   * reachable directly: anyone could then claim any address.
+   */
+  trustProxy?: boolean;
 };
+
+/** Fixed one-minute windows per key; enough to blunt a script, not a botnet. */
+export class RateLimiter {
+  private readonly windows = new Map<string, { start: number; count: number }>();
+
+  constructor(
+    private readonly perMinute: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  allow(key: string): boolean {
+    const at = this.now();
+    const window = this.windows.get(key);
+    if (!window || at - window.start >= 60_000) {
+      if (this.windows.size >= 100_000) this.prune(at);
+      this.windows.set(key, { start: at, count: 1 });
+      return true;
+    }
+    window.count++;
+    return window.count <= this.perMinute;
+  }
+
+  private prune(at: number) {
+    for (const [key, window] of this.windows) if (at - window.start >= 60_000) this.windows.delete(key);
+  }
+}
+
+type RequestContext = {
+  client: string;
+  secure: boolean;
+};
+
+export function requestContext(
+  req: Request,
+  server?: { requestIP(request: Request): { address: string } | null },
+  trustProxy = false,
+): RequestContext {
+  const url = new URL(req.url);
+  let client = server?.requestIP(req)?.address ?? "unknown";
+  let secure = url.protocol === "https:";
+  if (trustProxy) {
+    // The proxy appends the address it saw; the last entry is the one it vouches for.
+    const forwarded = req.headers.get("X-Forwarded-For")?.split(",").at(-1)?.trim();
+    if (forwarded) client = forwarded;
+    secure = req.headers.get("X-Forwarded-Proto")?.split(",")[0]?.trim() === "https" || secure;
+  }
+  return { client, secure };
+}
 
 const LARGE_PATH = /(?:^|\/)(?:Content|Audio|_framework|_content)(?:\/|$)/i;
 
@@ -139,35 +210,64 @@ function contentTypeFor(path: string, fileType: string): string {
 }
 
 function json(body: unknown, status = 200, extra?: Record<string, string>): Response {
-  const headers = new Headers(ISOLATION_HEADERS);
+  const headers = new Headers(SECURITY_HEADERS);
   headers.set("Content-Type", "application/json");
   headers.set("Cache-Control", "no-store");
   for (const [name, value] of Object.entries(extra ?? {})) headers.append(name, value);
   return new Response(JSON.stringify(body), { status, headers });
 }
 
-function cookieFor(gate: OwnershipGate, token: string | null): string {
+function cookieFor(gate: OwnershipGate, token: string | null, secure: boolean): string {
   const value = token ? encodeURIComponent(token) : "";
   const age = token ? gate.tokenLifetimeSeconds : 0;
   // HttpOnly: the page never reads it; the browser attaches it to asset requests.
-  return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${age}; HttpOnly; SameSite=Strict`;
+  // Secure whenever the page came over https, so it never travels in the clear.
+  return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${age}; HttpOnly; SameSite=Strict${secure ? "; Secure" : ""}`;
 }
 
-export async function handleOwnership(req: Request, url: URL, gate?: OwnershipGate): Promise<Response> {
+/** A browser always sends Origin on POST and WebSocket; another site's must not be honoured. */
+function crossOrigin(req: Request): boolean {
+  const origin = req.headers.get("Origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).host !== (req.headers.get("Host") ?? new URL(req.url).host);
+  } catch {
+    return true;
+  }
+}
+
+export async function handleOwnership(
+  req: Request,
+  url: URL,
+  gate?: OwnershipGate,
+  context: RequestContext = { client: "unknown", secure: false },
+  limiter?: RateLimiter,
+): Promise<Response> {
   if (!gate) return json({ error: "This host has no reference copy of the game." }, 503);
   const token = readCookie(req.headers.get("Cookie"), COOKIE_NAME);
   const route = url.pathname.slice(OWNERSHIP_PATH.length);
 
   if (req.method === "GET" && route === "") {
-    return json({ verified: gate.verify(token) });
+    return json({ verified: gate.verify(token, context.client) });
   }
   if (req.method !== "POST") return json({ error: "Method Not Allowed" }, 405);
+  if (crossOrigin(req)) return json({ error: "Forbidden" }, 403);
+  if (limiter && !limiter.allow(context.client)) {
+    return json({ error: "Too many attempts. Wait a minute and try again." }, 429, { "Retry-After": "60" });
+  }
 
   if (route === "/challenge") {
     try {
       return json(await gate.challenge());
     } catch (err) {
-      return json({ error: String(err) }, 503);
+      if (err instanceof GateBusyError) {
+        return json({ error: "This host is busy checking other players. Try again shortly." }, 503, {
+          "Retry-After": "30",
+        });
+      }
+      // The error names paths on this machine; those stay in the log.
+      console.error(err);
+      return json({ error: "This host cannot check copies of the game right now." }, 503);
     }
   }
   if (route === "/answer") {
@@ -176,13 +276,27 @@ export async function handleOwnership(req: Request, url: URL, gate?: OwnershipGa
     if (!granted) {
       return json({ verified: false, error: "That file is not the copy of the game this host runs." }, 403);
     }
-    return json({ verified: true }, 200, { "Set-Cookie": cookieFor(gate, granted) });
+    return json({ verified: true }, 200, { "Set-Cookie": cookieFor(gate, granted, context.secure) });
   }
   if (route === "/forget") {
     gate.revoke(token);
-    return json({ verified: false }, 200, { "Set-Cookie": cookieFor(gate, null) });
+    return json({ verified: false }, 200, { "Set-Cookie": cookieFor(gate, null, context.secure) });
   }
   return json({ error: "Not Found" }, 404);
+}
+
+function text(body: string, status: number, extra?: Record<string, string>): Response {
+  return new Response(body, { status, headers: { ...SECURITY_HEADERS, ...extra } });
+}
+
+/**
+ * Whether a path reaches gated files. Tested on the decoded path - the one
+ * the file lookup uses - so `%5Fframework` or `Content%2F...` can't slip past.
+ */
+export function isGatedPath(pathname: string): boolean {
+  const decoded = decodePathname(pathname);
+  if (decoded === null) return true;
+  return GATED_PATH.test(decoded.replaceAll("\\", "/"));
 }
 
 export async function handleRequest(
@@ -190,15 +304,19 @@ export async function handleRequest(
   roots: HostRoots,
   server?: { timeout(request: Request, seconds: number): void },
   gate?: OwnershipGate,
+  context?: RequestContext,
 ): Promise<Response> {
   const url = new URL(req.url);
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return text("Method Not Allowed", 405, { Allow: "GET, HEAD" });
+  }
   // The real ownership gate; the page's check only decides whether to start.
-  if (GATED_PATH.test(url.pathname) && !gate?.verify(readCookie(req.headers.get("Cookie"), COOKIE_NAME))) {
-    return new Response("Verify your copy of the game first.", { status: 403, headers: ISOLATION_HEADERS });
+  if (isGatedPath(url.pathname) && !gate?.verify(readCookie(req.headers.get("Cookie"), COOKIE_NAME), context?.client)) {
+    return text("Verify your copy of the game first.", 403);
   }
   const filePath = await lookupFile(roots, url.pathname);
   if (!filePath) {
-    return new Response("Not Found", { status: 404, headers: ISOLATION_HEADERS });
+    return text("Not Found", 404);
   }
 
   if (LARGE_PATH.test(url.pathname)) {
@@ -206,7 +324,7 @@ export async function handleRequest(
   }
 
   const file = Bun.file(filePath);
-  const headers = new Headers(ISOLATION_HEADERS);
+  const headers = new Headers(SECURITY_HEADERS);
   headers.set("Content-Type", contentTypeFor(filePath, file.type));
   if (!IMMUTABLE_PATH.test(url.pathname)) {
     // No validator is sent, so this means re-fetch; these files are small.
@@ -218,6 +336,7 @@ export async function handleRequest(
 type RelaySocketData = {
   role: "host" | "client";
   room: string | null;
+  key?: string;
 };
 
 export function startHost(options: HostOptions) {
@@ -226,34 +345,40 @@ export function startHost(options: HostOptions) {
     frameworkRoot: resolve(options.frameworkRoot),
   };
   const hub = options.hub ?? new RelayHub({ log: (message) => console.log(`[relay] ${message}`) });
+  const trustProxy = options.trustProxy ?? false;
+  const ownershipLimiter = new RateLimiter(OWNERSHIP_REQUESTS_PER_MINUTE);
+  const relayLimiter = new RateLimiter(RELAY_UPGRADES_PER_MINUTE);
   return Bun.serve<RelaySocketData>({
     port: options.port ?? DEFAULT_PORT,
     hostname: options.hostname ?? "127.0.0.1",
     idleTimeout: 255,
+    maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
     fetch(req, server): Response | Promise<Response> | undefined {
       const url = new URL(req.url);
+      const context = requestContext(req, server, trustProxy);
       if (url.pathname === RELAY_PATH) {
         const request = parseRelayRequest(url);
-        if (!request) {
-          return new Response("Bad Request", { status: 400, headers: ISOLATION_HEADERS });
+        if (!request) return text("Bad Request", 400);
+        if (crossOrigin(req)) return text("Forbidden", 403);
+        // The relay carries whole farms between players, so it is for verified players too.
+        if (!options.gate?.verify(readCookie(req.headers.get("Cookie"), COOKIE_NAME), context.client)) {
+          return text("Verify your copy of the game first.", 403);
         }
+        if (!relayLimiter.allow(context.client)) return text("Too Many Requests", 429, { "Retry-After": "60" });
         // The socket doesn't exist until open(), so the room rides the upgrade.
         if (server.upgrade(req, { data: request })) return undefined;
-        return new Response("Expected a WebSocket upgrade", {
-          status: 426,
-          headers: ISOLATION_HEADERS,
-        });
+        return text("Expected a WebSocket upgrade", 426);
       }
       if (url.pathname === OWNERSHIP_PATH || url.pathname.startsWith(OWNERSHIP_PATH + "/")) {
-        return handleOwnership(req, url, options.gate);
+        return handleOwnership(req, url, options.gate, context, ownershipLimiter);
       }
-      return handleRequest(req, roots, server, options.gate);
+      return handleRequest(req, roots, server, options.gate, context);
     },
     websocket: {
       // A joining farmhand gets the whole world state in one message.
       maxPayloadLength: 64 * 1024 * 1024,
       open(ws) {
-        hub.open(ws, ws.data.role, ws.data.room);
+        hub.open(ws, ws.data.role, ws.data.room, ws.data.key);
       },
       message(ws, message) {
         hub.message(ws, message);
@@ -276,6 +401,14 @@ export async function openGate(repoRoot: string): Promise<OwnershipGate> {
   const gate = new OwnershipGate({ referencePath, secretPath });
   await gate.referenceSize();
   return gate;
+}
+
+/**
+ * HOST picks the interface (default loopback only). Set TRUST_PROXY=1 only
+ * when HOST is loopback and a TLS proxy in front forwards to it.
+ */
+export function hostBinding(env: NodeJS.ProcessEnv = process.env): { hostname: string; trustProxy: boolean } {
+  return { hostname: env.HOST || "127.0.0.1", trustProxy: env.TRUST_PROXY === "1" };
 }
 
 export function parsePort(env: NodeJS.ProcessEnv = process.env): number {
@@ -302,7 +435,7 @@ if (import.meta.main) {
     console.error("Set OWNERSHIP_REFERENCE to your own `Stardew Valley.dll` to serve the game.");
     process.exit(1);
   });
-  const server = startHost({ wwwroot, frameworkRoot, port: parsePort(), gate });
+  const server = startHost({ wwwroot, frameworkRoot, port: parsePort(), gate, ...hostBinding() });
   console.log(`Serving ${wwwroot} (+ ${frameworkRoot}) at ${server.url}`);
   console.log(`Players verify against ${gate.referencePath}`);
 }

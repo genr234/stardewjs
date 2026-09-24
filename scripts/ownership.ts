@@ -22,7 +22,15 @@ export type GateOptions = {
   tokenTtlMs?: number;
   /** Persisting the key lets tokens survive restarts. */
   secretPath?: string;
+  /** Challenges outstanding at once; past this the host asks players to retry. */
+  maxPending?: number;
+  /** A token seen from more addresses than this within shareWindowMs is revoked. */
+  maxClientsPerToken?: number;
+  shareWindowMs?: number;
 };
+
+/** Thrown by challenge() while too many challenges are outstanding. */
+export class GateBusyError extends Error {}
 
 export const COOKIE_NAME = "stardew_ownership";
 
@@ -31,8 +39,18 @@ export const GATED_PATH = /(?:^|\/)(?:Content|Audio|_framework)(?:\/|$)/i;
 const WINDOW_BYTES = 64 * 1024;
 const WINDOW_COUNT = 4;
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
-const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const TOKEN_SHAPE = /^([0-9a-z]{1,12})\.([0-9a-f]{64})$/;
+// Short enough that a token passed around stops working within the week.
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Bounds memory: a flood of challenge requests can't grow the map past this.
+const MAX_PENDING = 10_000;
+// A phone moving between wifi and mobile data changes address a few times a
+// day; a token posted publicly shows up from far more.
+const MAX_CLIENTS_PER_TOKEN = 8;
+const SHARE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const SWEEP_INTERVAL_MS = 60 * 1000;
+// expiry.nonce.signature; the nonce keeps two players verified in the same
+// millisecond from sharing a token, and so sharing a revocation.
+const TOKEN_SHAPE = /^(([0-9a-z]{1,12})\.[0-9a-f]{16})\.([0-9a-f]{64})$/;
 
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -96,6 +114,12 @@ export class OwnershipGate {
   private readonly pending = new Map<string, { ranges: Array<[number, number]>; expiresAt: number }>();
   /** Tokens revoked via /forget, kept until they would have expired. */
   private readonly revoked = new Map<string, number>();
+  /** Per token, the addresses it was used from and when each was last seen. */
+  private readonly seenFrom = new Map<string, { expiresAt: number; clients: Map<string, number> }>();
+  private readonly maxPending: number;
+  private readonly maxClientsPerToken: number;
+  private readonly shareWindowMs: number;
+  private lastSweep = 0;
   private readonly secret: Buffer;
   private binding: string | null = null;
   private reference: Promise<{ size: number }> | null = null;
@@ -106,6 +130,9 @@ export class OwnershipGate {
     this.randomBytes = options.randomBytes ?? defaultRandomBytes;
     this.challengeTtlMs = options.challengeTtlMs ?? CHALLENGE_TTL_MS;
     this.tokenTtlMs = options.tokenTtlMs ?? TOKEN_TTL_MS;
+    this.maxPending = options.maxPending ?? MAX_PENDING;
+    this.maxClientsPerToken = options.maxClientsPerToken ?? MAX_CLIENTS_PER_TOKEN;
+    this.shareWindowMs = options.shareWindowMs ?? SHARE_WINDOW_MS;
     this.secret = options.secretPath ? loadSecret(options.secretPath) : cryptoRandomBytes(32);
   }
 
@@ -127,8 +154,10 @@ export class OwnershipGate {
 
   private sweep() {
     const at = this.now();
+    this.lastSweep = at;
     for (const [id, entry] of this.pending) if (entry.expiresAt <= at) this.pending.delete(id);
     for (const [token, expiresAt] of this.revoked) if (expiresAt <= at) this.revoked.delete(token);
+    for (const [token, entry] of this.seenFrom) if (entry.expiresAt <= at) this.seenFrom.delete(token);
   }
 
   /**
@@ -164,6 +193,7 @@ export class OwnershipGate {
       for (const byte of bytes) offset = offset * 256 + byte;
       ranges.push([offset % span, length]);
     }
+    if (this.pending.size >= this.maxPending) throw new GateBusyError("too many checks in progress");
     const id = toHex(this.randomBytes(16));
     this.pending.set(id, { ranges, expiresAt: this.now() + this.challengeTtlMs });
     return { id, ranges, size };
@@ -192,27 +222,51 @@ export class OwnershipGate {
   grant(): string {
     const tag = this.referenceTag();
     if (!tag) throw new Error(`No reference copy of the game at ${this.referencePath}`);
-    const body = (this.now() + this.tokenTtlMs).toString(36);
+    const body = `${(this.now() + this.tokenTtlMs).toString(36)}.${toHex(this.randomBytes(8))}`;
     return `${body}.${this.sign(body, tag)}`;
   }
 
-  verify(token: string | null): boolean {
+  /**
+   * Pass the requester's address to count it against the token; a token used
+   * from too many places has been shared and is revoked.
+   */
+  verify(token: string | null, client?: string): boolean {
     if (!token) return false;
     const parts = TOKEN_SHAPE.exec(token);
     if (!parts) return false;
-    const [, body, signature] = parts as unknown as [string, string, string];
-    const expiresAt = parseInt(body, 36);
+    const [, body, expiry, signature] = parts as unknown as [string, string, string, string];
+    const expiresAt = parseInt(expiry, 36);
     if (!Number.isFinite(expiresAt) || expiresAt <= this.now()) return false;
     if (this.revoked.has(token)) return false;
     const tag = this.referenceTag();
     if (!tag) return false;
-    return sameSecret(signature, this.sign(body, tag));
+    if (!sameSecret(signature, this.sign(body, tag))) return false;
+    return client === undefined || this.noteClient(token, expiresAt, client);
+  }
+
+  private noteClient(token: string, expiresAt: number, client: string): boolean {
+    const at = this.now();
+    if (at - this.lastSweep >= SWEEP_INTERVAL_MS) this.sweep();
+    let entry = this.seenFrom.get(token);
+    if (!entry) {
+      entry = { expiresAt, clients: new Map() };
+      this.seenFrom.set(token, entry);
+    }
+    entry.clients.set(client, at);
+    for (const [seen, lastSeen] of entry.clients) {
+      if (lastSeen <= at - this.shareWindowMs) entry.clients.delete(seen);
+    }
+    if (entry.clients.size <= this.maxClientsPerToken) return true;
+    this.revoked.set(token, expiresAt);
+    this.seenFrom.delete(token);
+    return false;
   }
 
   revoke(token: string | null) {
     if (!token || !this.verify(token)) return;
     const parts = TOKEN_SHAPE.exec(token);
-    this.revoked.set(token, parseInt(parts![1]!, 36));
+    this.revoked.set(token, parseInt(parts![2]!, 36));
+    this.seenFrom.delete(token);
   }
 
   get tokenLifetimeSeconds(): number {

@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { join } from "node:path";
-import { DEFAULT_PORT, findFrameworkRoot, openGate, startHost } from "./serve.ts";
+import { DEFAULT_PORT, findFrameworkRoot, hostBinding, openGate, startHost } from "./serve.ts";
 
 const repoRoot = join(import.meta.dir, "..");
 const wwwroot = join(repoRoot, "src/web/wwwroot");
@@ -32,6 +32,7 @@ const server = startHost({
   frameworkRoot,
   port: Number(process.env.PORT || DEFAULT_PORT),
   gate,
+  ...hostBinding(),
 });
 console.log(`Web host at ${server.url}`);
 console.log(`Players verify against ${gate.referencePath}`);
