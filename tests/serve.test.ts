@@ -46,6 +46,14 @@ describe("static host", () => {
     expect(res.headers.get("Content-Type")).toBe("application/wasm");
   });
 
+  test("serves package _content through the build's static web assets manifest", async () => {
+    // dotnet build leaves these in the NuGet cache and only records where.
+    const res = await get("/_content/Fixture.Pkg/js/Pkg.js");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("__fixturePackage");
+    expect((await get("/_content/Fixture.Pkg/js/Missing.js")).status).toBe(404);
+  });
+
   test("sets an audio content type on extracted wave bank entries", async () => {
     const res = await get("/Audio/main/0005.opus");
     expect(res.status).toBe(200);

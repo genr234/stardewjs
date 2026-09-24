@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 
 import { COOKIE_NAME, GATED_PATH, OwnershipGate, readCookie } from "./ownership.ts";
@@ -71,10 +71,60 @@ async function isFile(path: string): Promise<boolean> {
   return info?.isFile() === true;
 }
 
+type StaticAssetNode = {
+  Children?: Record<string, StaticAssetNode> | null;
+  Asset?: { ContentRootIndex: number; SubPath: string } | null;
+};
+
+type StaticAssetManifest = {
+  ContentRoots: string[];
+  Root: StaticAssetNode;
+};
+
+const packageAssetCache = new Map<string, Map<string, string>>();
+
+/**
+ * `dotnet build` leaves `_content/` in the NuGet cache behind a manifest;
+ * this resolves it the same way `dotnet run` does.
+ */
+export function packageAssets(frameworkRoot: string): Map<string, string> {
+  const cached = packageAssetCache.get(frameworkRoot);
+  if (cached) return cached;
+  const assets = new Map<string, string>();
+  const buildDir = resolve(frameworkRoot, "..");
+  const glob = new Bun.Glob("*.staticwebassets.runtime.json");
+  for (const name of glob.scanSync({ cwd: buildDir, onlyFiles: true })) {
+    let manifest: StaticAssetManifest;
+    try {
+      manifest = JSON.parse(readFileSync(join(buildDir, name), "utf8"));
+    } catch {
+      continue;
+    }
+    const content = manifest.Root?.Children?._content;
+    const roots = manifest.ContentRoots.map((root) => resolve(buildDir, root));
+    const walk = (node: StaticAssetNode, urlPath: string) => {
+      if (node.Asset) {
+        const root = roots[node.Asset.ContentRootIndex];
+        const file = root && safeJoin(root, node.Asset.SubPath);
+        if (file) assets.set(urlPath, file);
+      }
+      for (const [child, next] of Object.entries(node.Children ?? {})) walk(next, `${urlPath}/${child}`);
+    };
+    if (content) walk(content, "/_content");
+  }
+  packageAssetCache.set(frameworkRoot, assets);
+  return assets;
+}
+
 export async function lookupFile(roots: HostRoots, urlPath: string): Promise<string | null> {
   const path = urlPath === "/" || urlPath === "" ? "/index.html" : urlPath;
   for (const root of [roots.wwwroot, roots.frameworkRoot]) {
     const candidate = safeJoin(root, path);
+    if (candidate && (await isFile(candidate))) return candidate;
+  }
+  const decoded = decodePathname(path);
+  if (decoded?.startsWith("/_content/")) {
+    const candidate = packageAssets(roots.frameworkRoot).get(decoded);
     if (candidate && (await isFile(candidate))) return candidate;
   }
   return null;
