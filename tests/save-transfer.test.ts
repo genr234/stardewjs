@@ -51,6 +51,9 @@ function page(options: { indexedDB?: IDBFactory; confirm?: boolean } = {}) {
     Number,
     String,
     RegExp,
+    Array,
+    Uint8Array,
+    btoa,
     console,
   };
   context.globalThis = context;
@@ -141,6 +144,97 @@ describe("moving saves in and out of the browser", () => {
     expect(failing.saves.busy).toBe(false);
   });
 });
+
+describe("bringing a farm over from the desktop game", () => {
+  const WORLD = '\uFEFF<?xml version="1.0" encoding="utf-8"?><SaveGame xmlns:xsi="x"><player/></SaveGame>';
+  const FARMER = '\uFEFF<?xml version="1.0" encoding="utf-8"?><Farmer xmlns:xsi="x"><name>Ricky</name></Farmer>';
+
+  /** A pick of the whole Saves folder, as the folder picker hands it over. */
+  function savesFolder(farm = "Pine_371154313") {
+    return [
+      pcFile(`Saves/${farm}/${farm}`, WORLD),
+      pcFile(`Saves/${farm}/${farm}_old`, WORLD),
+      pcFile(`Saves/${farm}/SaveGameInfo`, FARMER),
+      pcFile(`Saves/${farm}/SaveGameInfo_old`, FARMER),
+      pcFile(`Saves/${farm}/.DS_Store`, "junk"),
+      pcFile("Saves/steam_autocloud.vdf", "junk"),
+    ];
+  }
+
+  test("a picked Saves folder becomes the same files the browser build writes", async () => {
+    const { transfer, storage } = page();
+    const imported = await transfer.readPc(savesFolder());
+    expect(imported.folders).toEqual(["Pine_371154313"]);
+    expect(Object.keys(imported.files).sort()).toEqual([
+      "Pine_371154313/Pine_371154313",
+      "Pine_371154313/Pine_371154313_old",
+      "Pine_371154313/SaveGameInfo",
+      "Pine_371154313/SaveGameInfo_old",
+    ]);
+    expect(Buffer.from(imported.files["Pine_371154313/SaveGameInfo"], "base64").toString()).toBe(FARMER);
+
+    await storage.write(FILES);
+    expect(await transfer.addFarms(imported)).toBe(1);
+    const held = await storage.read();
+    expect(held["browser_123/browser_123"]).toBe(FILES["browser_123/browser_123"]);
+    expect(held["Pine_371154313/Pine_371154313"]).toBe(imported.files["Pine_371154313/Pine_371154313"]);
+  });
+
+  test("the farm folder itself, or its files picked loose, work too", async () => {
+    const { transfer } = page();
+    const inFolder = await transfer.readPc([
+      pcFile("Pine_1/Pine_1", WORLD),
+      pcFile("Pine_1/SaveGameInfo", FARMER),
+    ]);
+    expect(inFolder.folders).toEqual(["Pine_1"]);
+    const loose = await transfer.readPc([pcFile("", WORLD, "Pine_1"), pcFile("", FARMER, "SaveGameInfo")]);
+    expect(loose.files).toEqual(inFolder.files);
+  });
+
+  test("a farm of the same name is replaced whole, and only after asking", async () => {
+    const declined = page({ confirm: false });
+    await declined.storage.write({ "Pine_1/Pine_1": "b2xk", "Pine_1/Pine_1_old": "b2xkZXI=" });
+    await declined.saves.runPcImport({ target: { files: [pcFile("Pine_1/Pine_1", WORLD), pcFile("Pine_1/SaveGameInfo", FARMER)] } });
+    expect(await declined.storage.read()).toEqual({ "Pine_1/Pine_1": "b2xk", "Pine_1/Pine_1_old": "b2xkZXI=" });
+    expect(declined.saves.note).toMatch(/kept/);
+
+    const accepted = page();
+    await accepted.storage.write({ "Pine_1/Pine_1": "b2xk", "Pine_1/Pine_1_old": "b2xkZXI=" });
+    await accepted.saves.runPcImport({ target: { files: [pcFile("Pine_1/Pine_1", WORLD), pcFile("Pine_1/SaveGameInfo", FARMER)] } });
+    expect(Object.keys(await accepted.storage.read()).sort()).toEqual(["Pine_1/Pine_1", "Pine_1/SaveGameInfo"]);
+    expect(accepted.saves.note).toBe("added Pine - ready when you press Play");
+  });
+
+  test("a folder with no farm, or a damaged one, says so and writes nothing", async () => {
+    const { transfer, saves, storage } = page();
+    await storage.write(FILES);
+    await expect(transfer.readPc([pcFile("Documents/notes.txt", "hi")])).rejects.toThrow(/AppData/);
+    await expect(transfer.readPc([pcFile("Pine_1/Pine_1", "not xml"), pcFile("Pine_1/SaveGameInfo", FARMER)]))
+      .rejects.toThrow(/Pine_1.*damaged/);
+    // Half a farm is no farm: the load menu needs SaveGameInfo to list it.
+    await expect(transfer.readPc([pcFile("Pine_1/Pine_1", WORLD)])).rejects.toThrow(/Pine_1.*incomplete/);
+
+    await saves.runPcImport({ target: { files: [pcFile("Documents/notes.txt", "hi")] } });
+    expect(saves.error).toMatch(/No farm/);
+    expect(saves.busy).toBe(false);
+    expect(await storage.read()).toEqual(FILES);
+  });
+});
+
+/** A File from a folder pick: webkitRelativePath is empty for a loose pick. */
+function pcFile(relativePath: string, text: string, name = relativePath.split("/").pop()!) {
+  const bytes = new TextEncoder().encode(text);
+  const blob = (from: Uint8Array) => ({
+    text: async () => new TextDecoder().decode(from),
+    arrayBuffer: async () => from.slice().buffer,
+  });
+  return {
+    name,
+    webkitRelativePath: relativePath,
+    ...blob(bytes),
+    slice: (start: number, end: number) => blob(bytes.subarray(start, end)),
+  };
+}
 
 /** Enough of a File for the transfer: it only ever reads text(). */
 function file(text: string) {

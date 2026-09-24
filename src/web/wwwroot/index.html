@@ -1125,6 +1125,12 @@
               <input class="title-file" type="file" accept="application/json,.json"
                 :disabled="$store.saves.busy" @change="$store.saves.runImport($event)" />
             </label>
+            <label class="settings-button" :class="$store.saves.busy ? 'is-busy' : null"
+              title="Pick a farm's folder, or the whole Saves folder">
+              <span class="icon icon-folder" aria-hidden="true"></span><span>Import from PC</span>
+              <input class="title-file" type="file" webkitdirectory multiple
+                :disabled="$store.saves.busy" @change="$store.saves.runPcImport($event)" />
+            </label>
           </div>
           <p class="settings-note" x-text="$store.saves.note"></p>
           <p class="title-error" role="alert" x-show="$store.saves.error" x-text="$store.saves.error"></p>

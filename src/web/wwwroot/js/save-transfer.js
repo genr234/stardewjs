@@ -34,6 +34,67 @@ function download(text, filename) {
   window.setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
 }
 
+// A desktop farm folder is <farm>_<id>, holding the world file, SaveGameInfo,
+// and an _old copy of each. The player may pick the farm, Saves, or the folder
+// above, so files are placed by their own parent and everything else is dropped.
+const PC_SAVES = 'PC saves live in %AppData%\\StardewValley\\Saves on Windows, ' +
+  '~/.config/StardewValley/Saves on a Mac or Linux.';
+const FARM_FOLDER = /^[^/\\]+_\d+$/;
+
+function farmFileName(folder, name) {
+  return name === folder || name === folder + '_old' || name === 'SaveGameInfo' || name === 'SaveGameInfo_old';
+}
+
+// Both files are XmlSerializer output; checking the root element in the first
+// 1 KB tells a save apart without reading a 7 MB world twice.
+async function rootElement(file) {
+  const head = await file.slice(0, 1024).text();
+  const match = /^\uFEFF?\s*(?:<\?xml[^>]*\?>\s*)?<([A-Za-z]+)/.exec(head);
+  return match ? match[1] : '';
+}
+
+async function base64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
+  // Sliced to stay under String.fromCharCode's argument limit.
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/// Returns { folder: { name: File } }. Loose files (no folder in their path)
+/// form a farm only if exactly one of them is a world file.
+function groupFarms(fileList) {
+  const picked = Array.from(fileList || []);
+  const farms = {};
+  const loose = [];
+  for (const file of picked) {
+    const parts = String(file.webkitRelativePath || '').split(/[/\\]/).filter(Boolean);
+    const name = file.name;
+    const folder = parts.length >= 2 ? parts[parts.length - 2] : '';
+    if (!folder) {
+      loose.push(file);
+      continue;
+    }
+    if (!FARM_FOLDER.test(folder) || !farmFileName(folder, name)) continue;
+    (farms[folder] = farms[folder] || {})[name] = file;
+  }
+  const worlds = loose.filter(function (file) { return FARM_FOLDER.test(file.name); });
+  if (worlds.length === 1) {
+    const folder = worlds[0].name;
+    for (const file of loose) {
+      if (farmFileName(folder, file.name)) (farms[folder] = farms[folder] || {})[file.name] = file;
+    }
+  }
+  return farms;
+}
+
+function farmLabel(folder) {
+  return folder.replace(/_\d+$/, '');
+}
+
 export const saveTransfer = {
   async export_() {
     const files = await window.browserSaves.read();
@@ -71,7 +132,49 @@ export const saveTransfer = {
     return farms;
   },
 
-  /// How many farms are in this browser, for the menu to show.
+  /// Reads farms from a desktop save folder without writing anything.
+  async readPc(fileList) {
+    const farms = groupFarms(fileList);
+    const files = {};
+    const folders = [];
+    const refused = [];
+    for (const folder of Object.keys(farms).sort()) {
+      const found = farms[folder];
+      if (!found[folder] || !found.SaveGameInfo ||
+        await rootElement(found[folder]) !== 'SaveGame' || await rootElement(found.SaveGameInfo) !== 'Farmer') {
+        refused.push(folder);
+        continue;
+      }
+      for (const name of Object.keys(found)) files[folder + '/' + name] = await base64(found[name]);
+      folders.push(folder);
+    }
+    if (folders.length === 0) {
+      throw new Error(refused.length
+        ? 'Could not read the farm in ' + refused.join(', ') + ' - the save is incomplete or damaged.'
+        : 'No farm in that folder. ' + PC_SAVES);
+    }
+    return { files: files, folders: folders };
+  },
+
+  async existing(folders) {
+    const held = await window.browserSaves.read();
+    const present = new Set(Object.keys(held).map(function (path) { return String(path).split(/[/\\]/)[0]; }));
+    return folders.filter(function (folder) { return present.has(folder); });
+  },
+
+  /// A farm with the same folder is replaced whole, so no stale _old survives.
+  async addFarms(imported) {
+    const held = await window.browserSaves.read();
+    const replacing = new Set(imported.folders);
+    const files = {};
+    for (const [path, contents] of Object.entries(held)) {
+      if (!replacing.has(String(path).split(/[/\\]/)[0])) files[path] = contents;
+    }
+    Object.assign(files, imported.files);
+    await window.browserSaves.write(files);
+    return imported.folders.length;
+  },
+
   async count() {
     const files = await window.browserSaves.read().catch(function () { return {}; });
     return countFarms(files);
@@ -114,6 +217,30 @@ const saves = {
     try {
       const farms = await saveTransfer.import_(file);
       patch({ note: 'loaded ' + farms + plural(farms) + ' - they are ready when you press Play' });
+    } catch (err) {
+      patch({ error: String(err.message || err) });
+    } finally {
+      patch({ busy: false });
+    }
+  },
+
+  async runPcImport(event) {
+    const input = event && event.target;
+    const picked = input && input.files ? Array.from(input.files) : [];
+    if (input) input.value = '';
+    if (picked.length === 0 || current().busy) return;
+    patch({ busy: true, error: '', note: '' });
+    try {
+      const imported = await saveTransfer.readPc(picked);
+      const clashes = await saveTransfer.existing(imported.folders);
+      if (clashes.length && typeof window.confirm === 'function' &&
+        !window.confirm('This browser already has ' + clashes.map(farmLabel).join(', ') +
+          '. Replace it with the copy from your PC?')) {
+        patch({ note: 'kept the farms already in this browser' });
+        return;
+      }
+      await saveTransfer.addFarms(imported);
+      patch({ note: 'added ' + imported.folders.map(farmLabel).join(', ') + ' - ready when you press Play' });
     } catch (err) {
       patch({ error: String(err.message || err) });
     } finally {
