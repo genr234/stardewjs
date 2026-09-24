@@ -186,30 +186,8 @@
       opacity: 0;
     }
 
-    /* The (?) beside the one-line hint: the full explanation of the DLL check
-       is there for whoever asks, instead of a paragraph under the button. */
-    .title-help {
-      width: 18px;
-      height: 18px;
-      margin-left: 4px;
-      padding: 0;
-      border: 1px solid var(--ui-muted);
-      border-radius: 50%;
-      background: none;
-      color: var(--ui-muted);
-      font: inherit;
-      font-size: 11px;
-      line-height: 16px;
-      vertical-align: 1px;
-      cursor: pointer;
-    }
-
-    .title-help:hover,
-    .title-help:focus-visible,
-    .title-help[aria-expanded="true"] {
-      border-color: var(--ui-fg);
-      color: var(--ui-fg);
-      outline: none;
+    .title-waiting {
+      height: 46px;
     }
 
     .title-error {
@@ -968,31 +946,21 @@
     <div class="title-panel" x-show="!$store.settings.visible">
       <h1 class="title-name"><img class="title-logo" src="chicken-js.png" alt="Stardew Valley" /></h1>
       <template x-if="!$store.ownership.ready">
-        <p class="title-detail">checking with the host</p>
+        <div class="title-waiting" role="status" aria-label="checking with the host"></div>
       </template>
       <template x-if="$store.ownership.ready && !$store.ownership.unlocked">
-        <div x-data="{ help: false }">
+        <div>
           <label class="title-play" :class="$store.ownership.checking ? 'is-busy' : null">
             <span class="icon icon-folder" aria-hidden="true"></span>
             <span x-text="$store.ownership.checking ? 'checking your copy' : 'Choose Stardew Valley.dll'">Choose Stardew Valley.dll</span>
             <input class="title-file" type="file" :disabled="$store.ownership.checking"
               @change="$store.ownership.submit($event)" />
           </label>
-          <p class="title-detail">from your Steam or GOG install &middot; never uploaded
-            <button class="title-help" type="button" aria-label="how the check works"
-              :aria-expanded="help" @click="help = !help">?</button></p>
-          <p class="title-detail" x-show="help">this build plays only from your own copy of the game. The
-            host checks a few kilobytes of <code>Stardew Valley.dll</code> against its own copy; the file
-            itself never leaves this browser.</p>
           <p class="title-error" role="alert" x-show="$store.ownership.error" x-text="$store.ownership.error"></p>
         </div>
       </template>
       <template x-if="$store.ownership.ready && $store.ownership.unlocked">
-        <div>
-          <button class="title-play" type="button" @click="$store.title.play()"><span class="icon icon-play" aria-hidden="true"></span><span>Play</span></button>
-          <p class="title-detail"><span x-text="$store.ownership.detail"></span> &middot; saves stay in this
-            browser</p>
-        </div>
+        <button class="title-play" type="button" @click="$store.title.play()"><span class="icon icon-play" aria-hidden="true"></span><span>Play</span></button>
       </template>
       <nav class="title-links">
         <button class="title-link" type="button" @click="$store.settings.open()"><span class="icon icon-settings-cog" aria-hidden="true"></span><span>settings</span></button>
