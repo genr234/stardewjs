@@ -68,7 +68,10 @@ settings.close = function () {
 
 settings.get = function (name, fallback) {
   const values = current().values;
-  if (Object.prototype.hasOwnProperty.call(values, name)) return values[name];
+  // Read through the proxy before the ownership check, or Alpine won't track
+  // this name and nothing redraws the first time it is set.
+  const value = values[name];
+  if (Object.prototype.hasOwnProperty.call(values, name)) return value;
   if (fallback !== undefined) return fallback;
   return DEFAULTS[name];
 };
