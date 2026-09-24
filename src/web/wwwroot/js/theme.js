@@ -90,7 +90,7 @@ const THEMES = [
       rule: '#e0b83a',
       error: '#8c2312',
     },
-    wallpaper: { src: 'themes/coop.png', fit: 'tile', width: 1920 },
+    wallpaper: { src: 'themes/coop.png', fit: 'tile', width: 384 },
   },
 ];
 
