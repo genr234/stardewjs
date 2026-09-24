@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="ui-pending">
 
 <head>
   <meta charset="utf-8" />
@@ -24,6 +24,35 @@
       --ui-pattern-size: auto;
       --ui-pattern-repeat: repeat;
       --ui-pattern-rendering: auto;
+    }
+
+    /* Alpine drops x-cloak as it starts, after applying every x-show. */
+    [x-cloak] {
+      display: none !important;
+    }
+
+    /* js/reveal.js lifts ui-pending once the title screen is finished, so it
+       fades in whole rather than assembling itself on screen. Hidden, not
+       display: none, so its logo and icons load in the meantime. */
+    #title {
+      transition: opacity 200ms ease-out;
+    }
+
+    /* The boot overlay waits under the title from the start; it must not show
+       through while the title is still fading in. */
+    #boot {
+      transition: visibility 0s linear 200ms;
+    }
+
+    .ui-pending #title,
+    .ui-pending #boot {
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    .ui-pending #title *,
+    .ui-pending #boot * {
+      transition: none !important;
     }
 
     html,
@@ -984,13 +1013,13 @@
       </template>
       <nav class="title-links">
         <button class="title-link" type="button" @click="$store.settings.open()"><span class="icon icon-settings-cog" aria-hidden="true"></span><span>settings</span></button>
-        <button class="title-link" type="button" x-show="$store.ownership.unlocked"
+        <button class="title-link" type="button" x-cloak x-show="$store.ownership.unlocked"
           @click="$store.ownership.forget()"><span class="icon icon-logout" aria-hidden="true"></span><span>forget
             my copy</span></button>
       </nav>
     </div>
 
-    <div class="settings-panel" x-show="$store.settings.visible" x-init="$store.saves.refresh()"
+    <div class="settings-panel" x-cloak x-show="$store.settings.visible" x-init="$store.saves.refresh()"
       x-data="{ tab: 'look' }" role="dialog" aria-label="Settings">
       <div class="settings-tabs" role="tablist">
         <template x-for="[id, name, icon] in [['look', 'Look', 'colors-swatch'], ['sound', 'Sound', 'volume-3'],
@@ -1165,7 +1194,7 @@
       </div>
     </div>
   </div>
-  <div id="boot" x-data x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
+  <div id="boot" x-data x-cloak x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
     <div class="boot-panel" x-show="!$store.boot.failed">
       <p class="boot-status" id="boot-status" x-text="$store.boot.status">loading the .NET runtime</p>
       <canvas id="boot-jigsaw" width="270" height="270"></canvas>
@@ -1219,6 +1248,7 @@
   <script type="module" src="js/save-transfer.js"></script>
   <script type="module" src="js/host.js"></script>
   <script type="module" src="js/boot-jigsaw.js"></script>
+  <script type="module" src="js/reveal.js"></script>
   <script defer src="js/alpine.min.js"></script>
 </body>
 
