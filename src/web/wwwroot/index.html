@@ -46,10 +46,6 @@
       image-rendering: var(--ui-pattern-rendering);
     }
 
-    /* Each panel is a card on that wallpaper. Without the solid ground behind
-       them the motifs would read straight through the text. */
-    .title-panel,
-    .settings-panel,
     .boot-panel {
       box-sizing: border-box;
       padding: 22px;
@@ -82,12 +78,16 @@
       text-align: center;
     }
 
+    /* A pool of the theme's ground keeps the words legible over the wallpaper. */
     .title-panel {
-      width: min(28rem, calc(100vw - 3rem));
+      box-sizing: border-box;
+      width: min(34rem, 100vw);
+      padding: 80px clamp(28px, calc((100vw - 22rem) / 2), 96px);
+      background: radial-gradient(closest-side, var(--ui-bg) 72%, transparent);
     }
 
     .title-name {
-      margin: 0 0 20px;
+      margin: 0 0 28px;
       font: inherit;
       font-size: 20px;
       letter-spacing: 0.18em;
@@ -104,29 +104,49 @@
       image-rendering: pixelated;
     }
 
+    /* The one thing on the screen that should be pressed. Filled in the accent
+       with a hard pixel shadow under it, so it reads as a key that goes down
+       when clicked; everything else on the title is quiet text. */
     .title-play {
       display: block;
       width: 100%;
       box-sizing: border-box;
-      padding: 10px;
-      border: 2px solid var(--ui-fg);
-      background: var(--ui-sunken);
-      color: var(--ui-fg);
+      padding: 12px;
+      border: 0;
+      background: var(--ui-accent);
+      box-shadow: 0 4px 0 color-mix(in srgb, var(--ui-accent) 55%, #000);
+      color: var(--ui-on-accent);
       font: inherit;
-      letter-spacing: 0.12em;
+      font-weight: bold;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       cursor: pointer;
     }
 
     .title-play:hover,
-    .title-play:focus-visible {
-      background: var(--ui-accent);
-      color: var(--ui-on-accent);
+    .title-play:focus-visible,
+    .title-play:focus-within {
+      background: var(--ui-accent-light);
       outline: none;
     }
 
+    .title-play:active {
+      transform: translateY(3px);
+      box-shadow: 0 1px 0 color-mix(in srgb, var(--ui-accent) 55%, #000);
+    }
+
+    .title-play:focus-visible,
+    .title-play:has(:focus-visible) {
+      outline: 2px solid var(--ui-fg);
+      outline-offset: 3px;
+    }
+
+    .title-play.is-busy {
+      cursor: progress;
+    }
+
     .title-detail {
-      margin: 12px 0 0;
+      margin: 14px 0 0;
       color: var(--ui-muted);
       font-size: 12px;
     }
@@ -144,13 +164,30 @@
       opacity: 0;
     }
 
-    .title-play:focus-within {
-      background: var(--ui-accent);
-      color: var(--ui-on-accent);
+    /* The (?) beside the one-line hint: the full explanation of the DLL check
+       is there for whoever asks, instead of a paragraph under the button. */
+    .title-help {
+      width: 18px;
+      height: 18px;
+      margin-left: 4px;
+      padding: 0;
+      border: 1px solid var(--ui-muted);
+      border-radius: 50%;
+      background: none;
+      color: var(--ui-muted);
+      font: inherit;
+      font-size: 11px;
+      line-height: 16px;
+      vertical-align: 1px;
+      cursor: pointer;
     }
 
-    .title-play.is-busy {
-      cursor: progress;
+    .title-help:hover,
+    .title-help:focus-visible,
+    .title-help[aria-expanded="true"] {
+      border-color: var(--ui-fg);
+      color: var(--ui-fg);
+      outline: none;
     }
 
     .title-error {
@@ -159,16 +196,43 @@
       font-size: 12px;
     }
 
-    .title-forget {
-      margin: 16px 0 0;
-      padding: 0;
+    /* The secondary actions: a row of plain words under the play button, so
+       nothing competes with it for the eye. */
+    .title-links {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: 26px 0 0;
+    }
+
+    .title-link {
+      padding: 4px 0;
       border: 0;
       background: none;
       color: var(--ui-muted);
       font: inherit;
       font-size: 12px;
-      text-decoration: underline;
+      letter-spacing: 0.08em;
       cursor: pointer;
+    }
+
+    .title-link + .title-link::before {
+      content: "\00b7";
+      display: inline-block;
+      padding: 0 12px;
+      color: var(--ui-muted);
+    }
+
+    .title-link:hover,
+    .title-link:focus-visible {
+      color: var(--ui-fg);
+      outline: none;
+    }
+
+    .title-link:hover span,
+    .title-link:focus-visible span {
+      text-decoration: underline;
+      text-underline-offset: 3px;
     }
 
     /* An id selector outranks the UA rule for [hidden]. */
@@ -187,123 +251,127 @@
       text-align: center;
     }
 
-    /* Same shape as the play button, in the quieter of the two palettes, so it
-       reads as a control rather than as another line of explanatory text. */
-    .title-settings-open {
-      display: block;
-      width: 100%;
+    .settings-panel {
       box-sizing: border-box;
-      margin: 20px 0 0;
-      padding: 10px;
-      border: 2px solid var(--ui-line);
-      background: var(--ui-sunken);
-      color: var(--ui-fg);
+      width: min(34rem, calc(100vw - 2rem));
+      height: min(30rem, calc(100vh - 2rem));
+      padding: 0 22px 22px;
+      overflow-y: auto;
+      background: var(--ui-bg);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+      text-align: left;
+    }
+
+    .settings-tabs {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: stretch;
+      margin: 0 -22px;
+      padding: 0 12px;
+      border-bottom: 2px solid var(--ui-rule);
+      background: var(--ui-bg);
+    }
+
+    .settings-tab,
+    .settings-close {
+      padding: 16px 10px 12px;
+      border: 0;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      background: none;
+      color: var(--ui-muted);
       font: inherit;
-      letter-spacing: 0.12em;
+      font-size: 12px;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       cursor: pointer;
     }
 
-    .title-settings-open:hover,
-    .title-settings-open:focus-visible {
-      border-color: var(--ui-fg);
-      background: var(--ui-fg);
-      color: var(--ui-on-accent);
+    .settings-tab:hover,
+    .settings-tab:focus-visible,
+    .settings-close:hover,
+    .settings-close:focus-visible {
+      color: var(--ui-fg);
       outline: none;
     }
 
-    /* Wider than the title panel and scrollable: the menu is a list of rows,
-       and a short window should not hide the Back button at the end of it. */
-    .settings-panel {
-      width: min(34rem, calc(100vw - 3rem));
-      max-height: calc(100vh - 3rem);
-      overflow-y: auto;
-      text-align: left;
+    .settings-tab[aria-selected="true"] {
+      border-bottom-color: var(--ui-accent);
+      color: var(--ui-fg);
     }
 
-    .settings-title {
-      margin: 0;
-      font: inherit;
-      font-size: 20px;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--ui-accent);
+    .settings-close {
+      margin-left: auto;
+      font-size: 16px;
+      letter-spacing: 0;
     }
 
     .settings-group {
-      margin: 24px 0 0;
+      margin: 0;
       padding: 0 0 4px;
+    }
+
+    .settings-group + .settings-group {
+      margin-top: 8px;
       border-top: 1px solid var(--ui-rule);
     }
 
-    /* The theme picker is the first thing in the menu and sits directly under
-       the title, so it goes without the rule that separates the rest. */
-    .settings-group:first-of-type {
-      margin-top: 14px;
-      border-top: 0;
-    }
-
-    /* One card per theme, as many across as the panel has room for. A theme is
-       a look, so the swatch shows the look rather than naming its colours:
-       the theme's own ground, its own wallpaper, and two chips for the two
-       colours the menu itself would be written in. */
     .theme-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
       gap: 10px;
     }
 
     .theme-swatch {
+      position: relative;
       display: block;
       padding: 0;
       border: 2px solid var(--ui-line);
       background: var(--ui-sunken);
-      color: var(--ui-muted);
-      font: inherit;
-      font-size: 12px;
-      text-align: left;
       cursor: pointer;
     }
 
     .theme-swatch:hover,
     .theme-swatch:focus-visible {
       border-color: var(--ui-fg);
-      color: var(--ui-fg);
       outline: none;
     }
 
     .theme-swatch.is-chosen {
       border-color: var(--ui-accent);
-      color: var(--ui-fg);
+      box-shadow: 0 0 0 2px var(--ui-accent);
     }
 
     .theme-preview {
       display: flex;
       align-items: flex-end;
       gap: 4px;
-      height: 4.5rem;
+      height: 4rem;
       padding: 6px;
-      border-bottom: 2px solid var(--ui-line);
     }
 
     .theme-chip {
-      width: 14px;
-      height: 14px;
+      width: 12px;
+      height: 12px;
       border: 1px solid rgba(0, 0, 0, 0.35);
-    }
-
-    .theme-name {
-      display: block;
-      padding: 7px 9px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
     }
 
     /* A tick rather than a second colour: on the paler themes the border alone
        is easy to miss. */
-    .theme-swatch.is-chosen .theme-name::after {
-      content: " \2713";
-      color: var(--ui-accent);
+    .theme-swatch.is-chosen::after {
+      content: "\2713";
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 18px;
+      height: 18px;
+      background: var(--ui-accent);
+      color: var(--ui-on-accent);
+      font-size: 12px;
+      line-height: 18px;
+      text-align: center;
     }
 
     .settings-heading {
@@ -429,13 +497,8 @@
       color: var(--ui-muted);
     }
 
-    .settings-panel .title-play {
-      margin: 28px 0 0;
-    }
-
-    .settings-panel .title-forget {
-      display: block;
-      margin: 14px auto 0;
+    .settings-reset {
+      margin-top: 2px;
     }
 
     #boot {
@@ -574,167 +637,194 @@
 
 <body>
   <canvas id="theCanvas" width="1280" height="720"></canvas>
-  <div id="title" x-data x-show="$store.title.visible">
+  <div id="title" x-data x-show="$store.title.visible"
+    @keydown.escape.window="$store.settings.visible && $store.settings.close()">
     <div class="title-panel" x-show="!$store.settings.visible">
       <h1 class="title-name"><img class="title-logo" src="chicken-js.png" alt="Stardew Valley" /></h1>
       <template x-if="!$store.ownership.ready">
         <p class="title-detail">checking with the host</p>
       </template>
       <template x-if="$store.ownership.ready && !$store.ownership.unlocked">
-        <div>
+        <div x-data="{ help: false }">
           <label class="title-play" :class="$store.ownership.checking ? 'is-busy' : null">
             <span x-text="$store.ownership.checking ? 'checking your copy' : 'Choose Stardew Valley.dll'">Choose Stardew Valley.dll</span>
             <input class="title-file" type="file" :disabled="$store.ownership.checking"
               @change="$store.ownership.submit($event)" />
           </label>
-          <p class="title-detail">this build plays only from your own copy of the game &mdash; point it at
-            <code>Stardew Valley.dll</code> in the folder Steam or GOG installed. The host checks a few
-            kilobytes of it against its own copy; the file itself is never uploaded.</p>
+          <p class="title-detail">from your Steam or GOG install &middot; never uploaded
+            <button class="title-help" type="button" aria-label="how the check works"
+              :aria-expanded="help" @click="help = !help">?</button></p>
+          <p class="title-detail" x-show="help">this build plays only from your own copy of the game. The
+            host checks a few kilobytes of <code>Stardew Valley.dll</code> against its own copy; the file
+            itself never leaves this browser.</p>
           <p class="title-error" role="alert" x-show="$store.ownership.error" x-text="$store.ownership.error"></p>
         </div>
       </template>
       <template x-if="$store.ownership.ready && $store.ownership.unlocked">
         <div>
           <button class="title-play" type="button" @click="$store.title.play()">Play</button>
-          <p class="title-detail"><span x-text="$store.ownership.detail"></span> &mdash; runs in this tab;
-            saves stay in this browser</p>
-          <button class="title-forget" type="button" @click="$store.ownership.forget()">forget my copy</button>
+          <p class="title-detail"><span x-text="$store.ownership.detail"></span> &middot; saves stay in this
+            browser</p>
         </div>
       </template>
-      <button class="title-settings-open" type="button" @click="$store.settings.open()">Settings</button>
+      <nav class="title-links">
+        <button class="title-link" type="button" @click="$store.settings.open()"><span>settings</span></button>
+        <button class="title-link" type="button" x-show="$store.ownership.unlocked"
+          @click="$store.ownership.forget()"><span>forget my copy</span></button>
+      </nav>
     </div>
 
-    <div class="settings-panel" x-show="$store.settings.visible" x-init="$store.saves.refresh()">
-      <h2 class="settings-title">Settings</h2>
-      <section class="settings-group">
-        <h3 class="settings-heading">Theme</h3>
-        <div class="theme-grid">
-          <template x-for="theme in $store.themes.list" :key="theme.id">
-            <button class="theme-swatch" type="button"
-              :class="$store.themes.chosen === theme.id ? 'is-chosen' : null"
-              :aria-pressed="$store.themes.chosen === theme.id"
-              @click="$store.settings.set('ui.theme', theme.id)">
-              <span class="theme-preview" :style="$store.themes.preview(theme.id)">
-                <span class="theme-chip" :style="{ background: theme.palette.accent }"></span>
-                <span class="theme-chip" :style="{ background: theme.palette.fg }"></span>
-              </span>
-              <span class="theme-name" x-text="theme.name"></span>
-            </button>
-          </template>
-        </div>
-      </section>
+    <div class="settings-panel" x-show="$store.settings.visible" x-init="$store.saves.refresh()"
+      x-data="{ tab: 'look' }" role="dialog" aria-label="Settings">
+      <div class="settings-tabs" role="tablist">
+        <template x-for="[id, name] in [['look', 'Look'], ['sound', 'Sound'], ['game', 'Game'], ['saves', 'Saves']]" :key="id">
+          <button class="settings-tab" type="button" role="tab" :aria-selected="tab === id"
+            @click="tab = id" x-text="name"></button>
+        </template>
+        <button class="settings-close" type="button" aria-label="Close settings"
+          @click="$store.settings.close()">&#x2715;</button>
+      </div>
 
-      <section class="settings-group">
-        <h3 class="settings-heading">Sound</h3>
-        <label class="settings-row">
-          <span class="settings-label">overall volume</span>
-          <input class="settings-slider" type="range" min="0" max="1" step="0.05"
-            :value="$store.settings.get('audio.master')"
-            @input="$store.settings.set('audio.master', Number($event.target.value))" />
-          <span class="settings-value" x-text="Math.round($store.settings.get('audio.master') * 100) + '%'"></span>
-        </label>
-        <label class="settings-row">
-          <span class="settings-label">music</span>
-          <input class="settings-slider" type="range" min="0" max="1" step="0.05"
-            :value="$store.settings.get('audio.music')"
-            @input="$store.settings.set('audio.music', Number($event.target.value))" />
-          <span class="settings-value" x-text="Math.round($store.settings.get('audio.music') * 100) + '%'"></span>
-        </label>
-        <label class="settings-row">
-          <span class="settings-label">effects</span>
-          <input class="settings-slider" type="range" min="0" max="1" step="0.05"
-            :value="$store.settings.get('audio.effects')"
-            @input="$store.settings.set('audio.effects', Number($event.target.value))" />
-          <span class="settings-value" x-text="Math.round($store.settings.get('audio.effects') * 100) + '%'"></span>
-        </label>
-      </section>
+      <div role="tabpanel" x-show="tab === 'look'">
+        <section class="settings-group">
+          <h3 class="settings-heading">Theme</h3>
+          <div class="theme-grid">
+            <template x-for="theme in $store.themes.list" :key="theme.id">
+              <button class="theme-swatch" type="button"
+                :class="$store.themes.chosen === theme.id ? 'is-chosen' : null"
+                :aria-pressed="$store.themes.chosen === theme.id"
+                :aria-label="theme.name" :title="theme.name"
+                @click="$store.settings.set('ui.theme', theme.id)">
+                <span class="theme-preview" :style="$store.themes.preview(theme.id)">
+                  <span class="theme-chip" :style="{ background: theme.palette.accent }"></span>
+                  <span class="theme-chip" :style="{ background: theme.palette.fg }"></span>
+                </span>
+              </button>
+            </template>
+          </div>
+        </section>
 
-      <section class="settings-group">
-        <h3 class="settings-heading">Performance</h3>
-        <label class="settings-row">
-          <span class="settings-label">frame rate</span>
-          <select class="settings-select" :value="String($store.settings.get('pacing.fpsCap'))"
-            @change="$store.settings.set('pacing.fpsCap', Number($event.target.value))">
-            <option value="0">match the display</option>
-            <option value="60">60 per second</option>
-            <option value="30">30 per second</option>
-          </select>
-        </label>
-        <label class="settings-row">
-          <span class="settings-label">drawn resolution</span>
-          <select class="settings-select" :value="String($store.settings.get('display.renderScale'))"
-            @change="$store.settings.set('display.renderScale', Number($event.target.value))">
-            <option value="1">full</option>
-            <option value="0.75">three quarters</option>
-            <option value="0.5">half</option>
-          </select>
-        </label>
-        <label class="settings-row settings-row-check">
-          <input type="checkbox" :checked="$store.settings.get('pacing.pauseWhenHidden')"
-            @change="$store.settings.set('pacing.pauseWhenHidden', $event.target.checked)" />
-          <span class="settings-label">pause while the tab is in the background</span>
-        </label>
-        <label class="settings-row settings-row-check">
-          <input type="checkbox" :checked="$store.settings.get('profiler')"
-            @change="$store.settings.set('profiler', $event.target.checked)" />
-          <span class="settings-label">show the profiler</span>
-        </label>
-      </section>
-
-      <section class="settings-group">
-        <h3 class="settings-heading">Picture</h3>
-        <label class="settings-row settings-row-check">
-          <input type="checkbox" :checked="$store.settings.get('display.crisp')"
-            @change="$store.settings.set('display.crisp', $event.target.checked)" />
-          <span class="settings-label">keep the pixels crisp</span>
-        </label>
-        <button class="settings-button" type="button" @click="toggleFullscreen()">Toggle fullscreen</button>
-      </section>
-
-      <section class="settings-group">
-        <h3 class="settings-heading">Multiplayer</h3>
-        <label class="settings-row">
-          <span class="settings-label">relay</span>
-          <input class="settings-text" type="text" spellcheck="false" placeholder="this host"
-            :value="$store.settings.get('net.relay')"
-            @change="$store.settings.set('net.relay', $event.target.value.trim())" />
-        </label>
-      </section>
-
-      <section class="settings-group">
-        <h3 class="settings-heading">Saves</h3>
-        <div class="settings-actions">
-          <button class="settings-button" type="button" :disabled="$store.saves.busy"
-            @click="$store.saves.runExport()">Export to a file</button>
-          <label class="settings-button" :class="$store.saves.busy ? 'is-busy' : null">
-            <span>Load from a file</span>
-            <input class="title-file" type="file" accept="application/json,.json"
-              :disabled="$store.saves.busy" @change="$store.saves.runImport($event)" />
+        <section class="settings-group">
+          <h3 class="settings-heading">Picture</h3>
+          <label class="settings-row settings-row-check">
+            <input type="checkbox" :checked="$store.settings.get('display.crisp')"
+              @change="$store.settings.set('display.crisp', $event.target.checked)" />
+            <span class="settings-label">keep the pixels crisp</span>
           </label>
-        </div>
-        <p class="settings-note" x-text="$store.saves.note"></p>
-        <p class="title-error" role="alert" x-show="$store.saves.error" x-text="$store.saves.error"></p>
-      </section>
+          <button class="settings-button" type="button" @click="toggleFullscreen()">Toggle fullscreen</button>
+        </section>
+      </div>
 
-      <section class="settings-group">
-        <h3 class="settings-heading">Controller</h3>
-        <label class="settings-row">
-          <span class="settings-label">stick deadzone</span>
-          <input class="settings-slider" type="range" min="0" max="0.4" step="0.01"
-            :value="$store.settings.get('input.deadzone')"
-            @input="$store.settings.set('input.deadzone', Number($event.target.value))" />
-          <span class="settings-value" x-text="Math.round($store.settings.get('input.deadzone') * 100) + '%'"></span>
-        </label>
-        <label class="settings-row settings-row-check">
-          <input type="checkbox" :checked="$store.settings.get('input.pointerLock')"
-            @change="$store.settings.set('input.pointerLock', $event.target.checked)" />
-          <span class="settings-label">capture the mouse pointer while playing</span>
-        </label>
-      </section>
+      <div role="tabpanel" x-show="tab === 'sound'">
+        <section class="settings-group">
+          <h3 class="settings-heading">Sound</h3>
+          <label class="settings-row">
+            <span class="settings-label">overall volume</span>
+            <input class="settings-slider" type="range" min="0" max="1" step="0.05"
+              :value="$store.settings.get('audio.master')"
+              @input="$store.settings.set('audio.master', Number($event.target.value))" />
+            <span class="settings-value" x-text="Math.round($store.settings.get('audio.master') * 100) + '%'"></span>
+          </label>
+          <label class="settings-row">
+            <span class="settings-label">music</span>
+            <input class="settings-slider" type="range" min="0" max="1" step="0.05"
+              :value="$store.settings.get('audio.music')"
+              @input="$store.settings.set('audio.music', Number($event.target.value))" />
+            <span class="settings-value" x-text="Math.round($store.settings.get('audio.music') * 100) + '%'"></span>
+          </label>
+          <label class="settings-row">
+            <span class="settings-label">effects</span>
+            <input class="settings-slider" type="range" min="0" max="1" step="0.05"
+              :value="$store.settings.get('audio.effects')"
+              @input="$store.settings.set('audio.effects', Number($event.target.value))" />
+            <span class="settings-value" x-text="Math.round($store.settings.get('audio.effects') * 100) + '%'"></span>
+          </label>
+        </section>
+      </div>
 
-      <button class="title-play" type="button" @click="$store.settings.close()">Back</button>
-      <button class="title-forget" type="button" @click="$store.settings.forget(); $store.saves.refresh()">reset
-        everything to defaults</button>
+      <div role="tabpanel" x-show="tab === 'game'">
+        <section class="settings-group">
+          <h3 class="settings-heading">Performance</h3>
+          <label class="settings-row">
+            <span class="settings-label">frame rate</span>
+            <select class="settings-select" :value="String($store.settings.get('pacing.fpsCap'))"
+              @change="$store.settings.set('pacing.fpsCap', Number($event.target.value))">
+              <option value="0">match the display</option>
+              <option value="60">60 per second</option>
+              <option value="30">30 per second</option>
+            </select>
+          </label>
+          <label class="settings-row">
+            <span class="settings-label">drawn resolution</span>
+            <select class="settings-select" :value="String($store.settings.get('display.renderScale'))"
+              @change="$store.settings.set('display.renderScale', Number($event.target.value))">
+              <option value="1">full</option>
+              <option value="0.75">three quarters</option>
+              <option value="0.5">half</option>
+            </select>
+          </label>
+          <label class="settings-row settings-row-check">
+            <input type="checkbox" :checked="$store.settings.get('pacing.pauseWhenHidden')"
+              @change="$store.settings.set('pacing.pauseWhenHidden', $event.target.checked)" />
+            <span class="settings-label">pause while the tab is in the background</span>
+          </label>
+          <label class="settings-row settings-row-check">
+            <input type="checkbox" :checked="$store.settings.get('profiler')"
+              @change="$store.settings.set('profiler', $event.target.checked)" />
+            <span class="settings-label">show the profiler</span>
+          </label>
+        </section>
+
+        <section class="settings-group">
+          <h3 class="settings-heading">Controller</h3>
+          <label class="settings-row">
+            <span class="settings-label">stick deadzone</span>
+            <input class="settings-slider" type="range" min="0" max="0.4" step="0.01"
+              :value="$store.settings.get('input.deadzone')"
+              @input="$store.settings.set('input.deadzone', Number($event.target.value))" />
+            <span class="settings-value" x-text="Math.round($store.settings.get('input.deadzone') * 100) + '%'"></span>
+          </label>
+          <label class="settings-row settings-row-check">
+            <input type="checkbox" :checked="$store.settings.get('input.pointerLock')"
+              @change="$store.settings.set('input.pointerLock', $event.target.checked)" />
+            <span class="settings-label">capture the mouse pointer while playing</span>
+          </label>
+        </section>
+
+        <section class="settings-group">
+          <h3 class="settings-heading">Multiplayer</h3>
+          <label class="settings-row">
+            <span class="settings-label">relay</span>
+            <input class="settings-text" type="text" spellcheck="false" placeholder="this host"
+              :value="$store.settings.get('net.relay')"
+              @change="$store.settings.set('net.relay', $event.target.value.trim())" />
+          </label>
+        </section>
+      </div>
+
+      <div role="tabpanel" x-show="tab === 'saves'">
+        <section class="settings-group">
+          <h3 class="settings-heading">Saves</h3>
+          <div class="settings-actions">
+            <button class="settings-button" type="button" :disabled="$store.saves.busy"
+              @click="$store.saves.runExport()">Export to a file</button>
+            <label class="settings-button" :class="$store.saves.busy ? 'is-busy' : null">
+              <span>Load from a file</span>
+              <input class="title-file" type="file" accept="application/json,.json"
+                :disabled="$store.saves.busy" @change="$store.saves.runImport($event)" />
+            </label>
+          </div>
+          <p class="settings-note" x-text="$store.saves.note"></p>
+          <p class="title-error" role="alert" x-show="$store.saves.error" x-text="$store.saves.error"></p>
+        </section>
+
+        <section class="settings-group">
+          <h3 class="settings-heading">Defaults</h3>
+          <button class="title-link settings-reset" type="button"
+            @click="$store.settings.forget(); $store.saves.refresh()"><span>reset every setting to its
+              default</span></button>
+        </section>
+      </div>
     </div>
   </div>
   <div id="boot" x-data x-show="$store.boot.visible" :role="$store.boot.failed ? 'alert' : null">
