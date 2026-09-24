@@ -541,9 +541,29 @@ export function applyPlatformPatches(srcRoot = defaultSrc): void {
 #endif`,
   );
 
-  // Split-screen co-op has the second instance join the first over the loopback.
-  // There is no loopback here; the relay is the only route, so the joining
-  // instance waits for the host's invite code rather than dialling "localhost".
+  // The game's "Enter Invite Code" slot needs an SDK; relabel the LAN one.
+  patch(
+    srcRoot,
+    "StardewValley.Menus/CoopMenu.cs",
+    `\t\t\t: base(menu, Game1.content.LoadString("Strings\\\\UI:CoopMenu_JoinLANGame"))`,
+    `#if WEB
+\t\t\t: base(menu, Game1.content.LoadString("Strings\\\\UI:CoopMenu_EnterInviteCode"))
+#else
+\t\t\t: base(menu, Game1.content.LoadString("Strings\\\\UI:CoopMenu_JoinLANGame"))
+#endif`,
+  );
+  patch(
+    srcRoot,
+    "StardewValley.Menus/CoopMenu.cs",
+    `\t\tstring title = Game1.content.LoadString("Strings\\\\UI:CoopMenu_EnterIP");`,
+    `#if WEB
+\t\tstring title = Game1.content.LoadString("Strings\\\\UI:CoopMenu_EnterInviteCode");
+#else
+\t\tstring title = Game1.content.LoadString("Strings\\\\UI:CoopMenu_EnterIP");
+#endif`,
+  );
+
+  // Split-screen joins over loopback, which doesn't exist; wait for the invite code.
   patch(
     srcRoot,
     "StardewValley/Game1.cs",
