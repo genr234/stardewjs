@@ -16,9 +16,11 @@ with Blazor and WebGL.
 Works:
 
 - the title screen, menus, mouse, keyboard and gamepad
-- saves in IndexedDB, plus importing farms from the desktop game's saves folder
-- audio through Web Audio, using the game's own XACT mix
-- co-op through a relay on the host
+- importing saves from the pc version
+- multiplayer
+
+Work in progress:
+- SMAPI support (for the most part)
 
 ## Requirements
 
@@ -37,7 +39,7 @@ export DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec
 ## Build and run locally
 
 Copy your install into `vendor/game/` so that `vendor/game/MacOS/Stardew Valley.dll`
-and `vendor/game/Content/` exist. `vendor/` is gitignored.
+and `vendor/game/Content/` exist.
 
 Decompile and patch the game:
 
@@ -57,8 +59,7 @@ Build and serve:
 bun run web
 ```
 
-Open http://localhost:5199 and pick your `Stardew Valley.dll` when asked. The tab
-must stay visible, because a hidden tab barely runs the game loop.
+Open http://localhost:5199 and pick your `Stardew Valley.dll` when asked.
 
 ## Host publicly
 
