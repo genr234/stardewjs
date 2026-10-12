@@ -15,7 +15,7 @@ with Blazor and WebGL.
 
 Works:
 
-- the title screen, menus, mouse, keyboard and gamepad
+- the full game with both keyboard and gamepad support
 - importing saves from the pc version
 - multiplayer
 
